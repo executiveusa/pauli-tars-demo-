@@ -1,0 +1,7 @@
+config.json
+tars-state.json
+presence.log
+.deps_installed
+__pycache__/
+*.pyc
+workbench/*.html

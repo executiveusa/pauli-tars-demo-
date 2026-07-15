@@ -1,0 +1,21 @@
+# TARS — Mission Agent requirements
+# Core (required on all platforms):
+# (server.py uses only Python stdlib — no pip installs needed for chat + voice + missions)
+
+# Screen takeover (hands.py) — Windows:
+pyautogui>=0.9.54
+mss>=9.0.1
+Pillow>=10.0.0
+
+# Desktop monolith (presence.py) — Windows/Linux:
+PyQt6>=6.6.0
+
+# Screen takeover (hands.py) — macOS (pre-installed with system Python, or install pyobjc):
+# pyobjc-core>=10.0
+# pyobjc-framework-Quartz>=10.0
+# pyobjc-framework-ScreenCaptureKit>=10.0
+
+# Optional — Claude Code CLI for build missions:
+# Install separately: https://claude.com/claude-code
+# Windows: npm install -g @anthropic-ai/claude-code
+# macOS:   brew install claude-code  (or npm)

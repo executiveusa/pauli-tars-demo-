@@ -1,0 +1,2390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TARS — Mission Agent</title>
+<style>
+  :root{
+    --amber:#ffb000; --amber-2:#ffc24d; --amber-dim:rgba(255,176,0,.5);
+    --amber-faint:rgba(255,176,0,.12); --amber-soft:rgba(255,176,0,.13);
+    --amber-line:rgba(255,176,0,.34);
+    --ink:#efece6; --ink-2:#c4c1b9; --mut:#807e77; --bad:#ff5a48;
+    --ok:#7fd39a;
+    --bg:#0c0d11;                     /* app / stage base */
+    --surface:#15171d;                /* console panel */
+    --card:#1b1e25;                   /* cards */
+    --card-2:#232730;                 /* raised / hover */
+    --inset:#0f1115;                  /* input well */
+    --faint:rgba(255,255,255,.055);   /* hairline, low opacity */
+    --line:rgba(255,255,255,.07);
+    --panel:rgba(255,255,255,.03);
+    --r:14px; --r-sm:10px; --r-xs:7px;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,"Courier New",monospace;
+    --sh:0 4px 18px rgba(0,0,0,.32);
+    --sh-lg:0 30px 80px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;
+       display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;
+       text-rendering:optimizeLegibility}
+  #stars{position:fixed;inset:0;z-index:0}
+  #nebula{position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(ellipse 60% 45% at 78% 18%, rgba(80,100,160,.10), transparent 65%),
+      radial-gradient(ellipse 50% 40% at 15% 70%, rgba(255,150,40,.05), transparent 60%)}
+  body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(ellipse 120% 100% at 50% 45%, transparent 55%, rgba(0,0,0,.45))}
+
+  /* ------------------------------------------------ HUD */
+  #hud{position:relative;z-index:10;display:flex;align-items:center;gap:16px;row-gap:10px;
+       flex-wrap:wrap;flex-shrink:0;padding:12px 20px;border-bottom:1px solid var(--faint);
+       background:linear-gradient(180deg, rgba(12,13,17,.95), rgba(12,13,17,.7));
+       backdrop-filter:blur(10px)}
+  #wordmark{font-size:17px;font-weight:800;letter-spacing:.5em;color:var(--ink)}
+  #wordmark b{color:var(--amber)}
+  .hudlabel{font-size:9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+  #statusline{display:flex;gap:12px;align-items:center}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#3a3f47;
+       margin-right:5px;vertical-align:1px}
+  .dot.on{background:var(--amber);box-shadow:0 0 6px var(--amber-dim)}
+  .dot.err{background:var(--bad)}
+  #stateTag{font:600 9px/1 var(--mono);letter-spacing:.14em;color:var(--amber);
+    padding:6px 10px;border-radius:6px;background:var(--amber-soft)}
+  #clock{margin-left:auto;font:500 15px var(--mono);color:var(--amber);letter-spacing:.08em}
+  .dial{display:flex;flex-direction:column;gap:4px;min-width:116px}
+  .dial .row{display:flex;justify-content:space-between;align-items:baseline}
+  .dial .val{color:var(--amber);font:500 11px var(--mono)}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:3px;
+    background:linear-gradient(90deg,var(--amber) var(--fill,75%),#2b2f38 var(--fill,75%));
+    outline:none;cursor:pointer}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;
+    background:var(--amber);border:2px solid #14161c;border-radius:50%;
+    box-shadow:0 1px 4px rgba(0,0,0,.4)}
+  .hudbtn{background:var(--card);border:none;color:var(--mut);font:600 9px var(--sans);
+    letter-spacing:.06em;text-transform:uppercase;padding:8px 11px;border-radius:8px;
+    cursor:pointer;white-space:nowrap;transition:.15s}
+  .hudbtn:hover{background:var(--card-2);color:var(--ink)}
+  .hudbtn.armed{color:var(--amber);background:var(--amber-soft);
+    box-shadow:inset 0 0 0 1px var(--amber-line)}
+  #trustBtn.hot{color:var(--bad);background:rgba(255,90,72,.12);
+    box-shadow:inset 0 0 0 1px rgba(255,90,72,.4)}
+
+  /* ------------------------------------------------ layout */
+  #main{position:relative;z-index:5;display:flex;flex:1;min-height:0}
+  #stage{flex:1.1;display:flex;flex-direction:column;align-items:center;
+         justify-content:center;gap:14px;min-width:0;position:relative}
+  #rig3d{width:min(94%,720px);height:min(58vh,520px);position:relative;transition:.4s}
+  #tars3d{width:100%;height:100%;display:block}
+  #console{flex:1;max-width:600px;display:flex;flex-direction:column;gap:12px;
+           padding:16px 16px 0;min-height:0;background:var(--surface);
+           box-shadow:-1px 0 0 var(--faint), -26px 0 50px -26px rgba(0,0,0,.55)}
+  #hint{position:relative;z-index:10;display:flex;gap:20px;padding:10px 22px;flex-shrink:0;
+        border-top:1px solid var(--faint);color:var(--mut);
+        font:500 9px var(--sans);letter-spacing:.08em;text-transform:uppercase}
+  #hint .k{color:var(--ink-2);font-weight:700}
+  #tarsline{max-width:500px;text-align:center;color:var(--ink-2);
+            font:400 12px/1.7 var(--sans);min-height:38px;padding:0 12px}
+  #tarsline .amber{color:var(--amber)}
+  #channel{display:none;font:600 9px var(--mono);letter-spacing:.16em;color:var(--amber);
+    padding:6px 13px;border-radius:20px;background:var(--amber-soft);
+    box-shadow:inset 0 0 0 1px var(--amber-line)}
+  #channel.open{display:block;animation:blink 2.4s infinite}
+  @keyframes blink{50%{opacity:.4}}
+
+  /* ------------------------------------------------ settings panel */
+  #setOverlay{position:fixed;inset:0;z-index:65;background:rgba(6,7,10,.7);display:none;
+    align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+  #setOverlay.open{display:flex}
+  #setPanel{width:min(560px,92vw);max-height:86vh;overflow-y:auto;background:var(--card);
+    border-radius:18px;box-shadow:var(--sh-lg);padding:6px 4px}
+  .set-head{display:flex;align-items:center;padding:16px 20px 12px}
+  .set-head span{font:700 12px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+  .set-head button{margin-left:auto;background:var(--card-2);border:none;color:var(--ink-2);
+    font:600 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:8px 13px;
+    cursor:pointer;border-radius:8px}
+  .set-head button:hover{background:#2d323c;color:var(--ink)}
+  .set-sect{padding:12px 20px 16px}
+  .set-lbl{font:700 9.5px var(--sans);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--amber);margin-bottom:4px}
+  .set-hint{font:400 11px var(--sans);color:var(--mut);margin-bottom:11px;line-height:1.5}
+  .set-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .set-opt{text-align:left;background:var(--card-2);border:none;border-radius:11px;
+    padding:12px 13px;cursor:pointer;transition:.15s;box-shadow:inset 0 0 0 1.5px transparent}
+  .set-opt:hover{background:#2d323c}
+  .set-opt.on{background:var(--amber-soft);box-shadow:inset 0 0 0 1.5px var(--amber-line)}
+  .set-opt .so-t{font:600 13px var(--sans);color:var(--ink);display:block}
+  .set-opt.on .so-t{color:var(--amber)}
+  .set-opt .so-s{font:400 10.5px var(--sans);color:var(--mut);display:block;margin-top:2px}
+
+  /* ------------------------------------------------ tools panel (MCP catalog) */
+  #toolsOverlay{position:fixed;inset:0;z-index:65;background:rgba(6,7,10,.7);display:none;
+    align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+  #toolsOverlay.open{display:flex}
+  #toolsPanel{width:min(740px,94vw);max-height:88vh;overflow-y:auto;background:var(--card);
+    border-radius:18px;box-shadow:var(--sh-lg);padding:6px 4px}
+  #toolGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .tcard{background:var(--card-2);border-radius:12px;padding:12px 13px;
+    box-shadow:inset 0 0 0 1.5px transparent}
+  .tcard.on{box-shadow:inset 0 0 0 1.5px var(--amber-line)}
+  .tcard.hl{animation:tglow 1.1s ease 3}
+  @keyframes tglow{50%{box-shadow:inset 0 0 0 2px var(--amber)}}
+  .tcard .trow{display:flex;align-items:center;gap:10px}
+  .tcard .trow img{width:26px;height:26px;border-radius:6px;background:#fff;padding:2px;flex-shrink:0}
+  .tcard .tfall{width:26px;height:26px;border-radius:6px;background:var(--inset);color:var(--amber);
+    font:700 13px var(--mono);display:none;align-items:center;justify-content:center;flex-shrink:0}
+  .tcard .tname{font:600 13px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .tcard .tbadge{font:700 8px var(--mono);letter-spacing:.08em;padding:3px 6px;border-radius:5px;
+    margin-left:auto;flex-shrink:0}
+  .tcard .tbadge.safe{background:rgba(127,211,154,.14);color:var(--ok)}
+  .tcard .tbadge.act{background:var(--amber-faint);color:var(--amber)}
+  .tcard .tdesc{font:400 11px/1.45 var(--sans);color:var(--mut);margin:7px 0 9px}
+  .tcard input{width:100%;background:var(--inset);border:none;border-radius:8px;color:var(--ink);
+    font:400 11px var(--mono);padding:8px 10px;margin-bottom:7px}
+  .tcard input::placeholder{color:var(--mut)}
+  .tcard .tbtns{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .tcard .tbtns button{border:0;border-radius:8px;cursor:pointer;font:700 10px var(--mono);
+    letter-spacing:.06em;padding:8px 11px}
+  .tcard .tinstall{background:var(--amber);color:#141519}
+  .tcard .tinstall:hover{background:var(--amber-2)}
+  .tcard .tremove{background:var(--inset);color:var(--mut)}
+  .tcard .tremove:hover{color:var(--bad)}
+  .tcard .tstate{font:700 9px var(--mono);letter-spacing:.07em;color:var(--ok)}
+  .tcard .tstate.warn{color:var(--amber)}
+  .tcard .thint{font:400 10px/1.4 var(--sans);color:var(--mut);margin-top:6px}
+
+  /* ------------------------------------------------ console (modern assistant) */
+  .sect{background:var(--card);border-radius:var(--r);padding:15px 16px;flex-shrink:0;
+    box-shadow:var(--sh)}
+  .sect h2{display:flex;align-items:center;gap:8px;font:700 10px/1 var(--sans);
+    letter-spacing:.1em;text-transform:uppercase;color:var(--mut);margin-bottom:13px}
+  .sect h2.fold{cursor:pointer;user-select:none}
+  .sect h2.fold:hover{color:var(--ink-2)}
+  .sect h2::before{content:"▾";color:var(--amber);font-size:9px}
+  .sect.closed h2::before{content:"▸"}
+  .sect.closed h2{margin-bottom:0}
+  .sect.closed .sbody{display:none}
+  .h2btn{margin-left:auto;background:var(--card-2);border:none;color:var(--mut);
+    font:600 8px var(--sans);letter-spacing:.08em;text-transform:uppercase;padding:5px 9px;
+    border-radius:6px;cursor:pointer;transition:.15s}
+  .h2btn:hover{color:var(--amber);background:var(--amber-soft)}
+  .openapp{background:var(--amber);border:none;color:#1a1205;
+    font:700 8.5px var(--sans);letter-spacing:.04em;padding:5px 9px;cursor:pointer;
+    white-space:nowrap;border-radius:6px;transition:.15s}
+  .openapp:hover{background:var(--amber-2)}
+  /* composer */
+  #briefWrap{display:flex;align-items:center;gap:7px;background:var(--inset);
+    border-radius:var(--r-sm);padding:6px 7px 6px 14px;transition:.15s;
+    box-shadow:inset 0 0 0 1px transparent}
+  #briefWrap:focus-within{box-shadow:inset 0 0 0 1px var(--amber-line)}
+  #brief{flex:1;background:none;border:none;color:var(--ink);
+         font:400 14px var(--sans);padding:9px 0;outline:none;min-width:0}
+  #brief::placeholder{color:var(--mut)}
+  .sqbtn{width:36px;height:36px;flex-shrink:0;background:var(--card-2);border:none;
+    border-radius:8px;color:var(--mut);cursor:pointer;font-size:15px;transition:.15s;
+    display:flex;align-items:center;justify-content:center}
+  .sqbtn:hover{background:#2d323c;color:var(--amber)}
+  #mic.live{color:var(--bad);background:rgba(255,90,72,.16);animation:blink .9s infinite}
+  #mic.hf{color:var(--amber);background:var(--amber-soft)}
+  #seeBtn.on{color:var(--amber);background:var(--amber-soft);animation:blink 2.4s infinite}
+  .btnrow{display:flex;gap:8px;margin-top:10px}
+  .btn{flex:1;border:none;border-radius:var(--r-sm);background:var(--card-2);color:var(--ink-2);
+       font:600 12px var(--sans);letter-spacing:.01em;padding:12px 6px;cursor:pointer;transition:.15s}
+  .btn:hover{background:#2d323c;color:var(--ink)}
+  .btn.primary{background:var(--amber);color:#1a1205;font-weight:700;
+    box-shadow:0 4px 16px rgba(255,176,0,.22)}
+  .btn.primary:hover{background:var(--amber-2);color:#1a1205}
+  .btn:disabled{opacity:.4;cursor:default}
+  #modeHelp{margin-top:11px;font:400 11px/1.7 var(--sans);color:var(--mut)}
+  #modeHelp b{color:var(--ink-2);font-weight:600}
+  #pendingChip{display:none;margin-top:11px;padding:11px 13px;border-radius:var(--r-sm);
+    font:400 11.5px/1.6 var(--sans);color:var(--ink);background:rgba(255,90,72,.09);
+    box-shadow:inset 0 0 0 1px rgba(255,90,72,.28)}
+  #pendingChip.show{display:block}
+  #pendingChip .pc-t{font:700 8.5px var(--sans);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--bad);display:block;margin-bottom:5px}
+  #pendingChip .pc-btns{margin-top:9px;display:flex;gap:8px}
+  #pendingChip button{border:none;border-radius:7px;font:700 9px var(--sans);letter-spacing:.06em;
+    text-transform:uppercase;padding:7px 13px;cursor:pointer;background:var(--amber);color:#1a1205}
+  #pendingChip button.pc-cancel{background:var(--card-2);color:var(--mut)}
+  #chips{display:flex;flex-wrap:wrap;gap:7px;max-height:17vh;overflow-y:auto}
+  .chip{font:400 11.5px/1.4 var(--sans);color:var(--ink-2);border:none;padding:8px 12px;
+        cursor:pointer;border-radius:9px;background:var(--card-2);transition:.15s}
+  .chip:hover{background:var(--amber-soft);color:var(--amber)}
+  #sorties{max-height:22vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+  .sortie{padding:10px 11px;cursor:pointer;border-radius:var(--r-sm);background:var(--card-2);
+    transition:.15s}
+  .sortie:hover{background:#2d323c}
+  .sortie.running{box-shadow:inset 2px 0 0 var(--amber)}
+  .sortie .row1{display:flex;align-items:center;gap:9px}
+  .sortie .st{font:700 8px var(--mono);letter-spacing:.08em;padding:3px 7px;border-radius:5px;
+    white-space:nowrap}
+  .st.enroute{color:var(--amber);background:var(--amber-soft)}
+  .st.complete{color:var(--ok);background:rgba(127,211,154,.12)}
+  .st.failed,.st.aborted{color:var(--bad);background:rgba(255,90,72,.12)}
+  .sortie .ag{font:700 8px var(--mono);letter-spacing:.06em;color:var(--amber);
+    background:rgba(255,176,0,.09);padding:3px 6px;border-radius:5px;white-space:nowrap}
+  .sortie .bf{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    color:var(--ink-2);font:400 12px var(--sans)}
+  .sortie .tm{color:var(--mut);font:400 10px var(--mono);white-space:nowrap}
+  .sortie .sx{background:none;border:0;color:var(--mut);cursor:pointer;flex-shrink:0;
+    font:700 12px var(--sans);padding:2px 5px;border-radius:6px;opacity:0;transition:.12s}
+  .sortie:hover .sx{opacity:.75}
+  .sortie .sx:hover{opacity:1;color:var(--bad);background:var(--inset)}
+  .sortie .tick{margin:7px 0 0 1px;font:400 10.5px var(--mono);color:var(--amber);opacity:.85;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sortie .tick::before{content:"→ ";color:var(--amber-dim)}
+  #empty{color:var(--mut);font:400 11.5px var(--sans);padding:4px 2px}
+  /* conversation */
+  #feed{flex:1;overflow-y:auto;padding:2px 2px 16px;display:flex;flex-direction:column;
+    gap:10px;min-height:90px}
+  .tx{font:400 13px/1.65 var(--sans);word-wrap:break-word;max-width:92%}
+  .tx .who{font:700 8.5px var(--sans);letter-spacing:.12em;text-transform:uppercase;
+    color:var(--mut);display:block;margin-bottom:4px}
+  .tx.tars{color:var(--ink);background:var(--card);padding:11px 14px;
+    border-radius:13px 13px 13px 4px;box-shadow:var(--sh)}
+  .tx.tars .who{color:var(--amber)}
+  .tx.you{color:var(--ink-2);align-self:flex-end;text-align:right;
+    background:var(--card-2);padding:10px 13px;border-radius:13px 13px 4px 13px}
+  .tx.you .who{color:var(--mut)}
+  ::-webkit-scrollbar{width:7px;height:7px}
+  ::-webkit-scrollbar-thumb{background:var(--faint);border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.14)}
+
+  /* ------------------------------------------------ report overlay */
+  /* takeover — "TARS is driving your real Mac" card, bottom-right, big STOP */
+  #driveCard{position:fixed;right:16px;bottom:46px;z-index:55;width:min(360px,88vw);
+    background:var(--card);border-radius:var(--r);box-shadow:var(--sh-lg),inset 3px 0 0 var(--amber);
+    padding:13px 15px;display:none}
+  #driveCard.on{display:block;animation:jin .4s cubic-bezier(.2,.85,.25,1.15)}
+  #driveCard .dc-head{display:flex;align-items:center;gap:9px}
+  #driveCard .dc-dot{width:9px;height:9px;border-radius:50%;background:var(--amber);
+    box-shadow:0 0 10px var(--amber);animation:dcpulse 1s infinite}
+  @keyframes dcpulse{50%{opacity:.3}}
+  #dcTitle{font:700 10.5px var(--mono);letter-spacing:.14em;color:var(--amber)}
+  #dcStop{margin-left:auto;background:var(--bad);color:#fff;border:0;border-radius:8px;
+    font:700 11px var(--mono);letter-spacing:.08em;padding:8px 16px;cursor:pointer}
+  #dcStop:hover{filter:brightness(1.12)}
+  #dcTask{font:600 12.5px var(--sans);color:var(--ink);margin:9px 0 8px}
+  #dcFeed{max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:5px}
+  #dcFeed .dcl{font:400 11.5px/1.4 var(--sans);color:var(--ink-2)}
+  #dcFeed .dcl.act{font-family:var(--mono);font-size:10.5px;color:var(--amber)}
+  #dcFeed .dcl.say{color:var(--ink)}
+  #dcFeed .dcl.done{color:var(--ok);font-weight:600}
+  #dcFeed .dcl.error{color:var(--bad)}
+  /* job completion cards — pop in bottom-left when a robot comes back */
+  #jobCards{position:fixed;left:16px;bottom:46px;z-index:40;display:flex;
+    flex-direction:column;gap:10px;width:min(370px,86vw);pointer-events:none}
+  .jcard{pointer-events:auto;background:var(--card);border-radius:var(--r);
+    box-shadow:var(--sh-lg),inset 3px 0 0 var(--ok);padding:13px 15px 13px 17px}
+  .jcard.bad{box-shadow:var(--sh-lg),inset 3px 0 0 var(--bad)}
+  .jcard{animation:jin .5s cubic-bezier(.2,.85,.25,1.15)}
+  @keyframes jin{from{transform:translateY(22px);opacity:0}to{transform:none;opacity:1}}
+  .jcard .jhead{display:flex;align-items:center;gap:9px}
+  .jcard .jtitle{font:700 10.5px var(--mono);letter-spacing:.14em;color:var(--ok)}
+  .jcard.bad .jtitle{color:var(--bad)}
+  .jcard .jx{margin-left:auto;background:none;border:0;color:var(--mut);cursor:pointer;
+    font:700 13px var(--sans);padding:1px 5px;border-radius:6px}
+  .jcard .jx:hover{color:var(--ink);background:var(--card-2)}
+  .jcard .jbrief{margin-top:8px;font:600 12.5px var(--sans);color:var(--ink);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .jcard .jline{margin-top:5px;font:400 11.5px/1.5 var(--sans);color:var(--ink-2);
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .jcard .jbtns{display:flex;gap:8px;margin-top:11px}
+  .jcard .jbtns button{border:0;border-radius:9px;cursor:pointer;
+    font:700 10.5px var(--mono);letter-spacing:.07em;padding:9px 13px}
+  .jcard .jopen{background:var(--amber);color:#141519}
+  .jcard .jopen:hover{background:var(--amber-2)}
+  .jcard .jview{background:var(--card-2);color:var(--ink)}
+  .jcard .jview:hover{background:#2d323c}
+  #overlay{position:fixed;inset:0;z-index:60;background:rgba(6,7,10,.7);display:none;
+           align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+  #overlay.open{display:flex}
+  #report{width:min(880px,92vw);height:min(82vh,780px);background:var(--card);
+          border-radius:18px;display:flex;flex-direction:column;box-shadow:var(--sh-lg);
+          overflow:hidden}
+  #repHead{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--faint)}
+  #repHead .t{font:700 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--amber)}
+  #repHead .meta{color:var(--mut);font:400 11px var(--mono);letter-spacing:.04em}
+  #repHead button{margin-left:auto;background:var(--card-2);border:none;color:var(--ink-2);
+    font:600 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:8px 13px;
+    cursor:pointer;border-radius:8px;transition:.15s}
+  #repHead button:hover{color:var(--ink);background:#2d323c}
+  #repBody{flex:1;overflow-y:auto;padding:24px 28px;line-height:1.75;
+    font:400 13.5px var(--sans);color:var(--ink-2)}
+  #repBody h1{color:var(--ink);font:700 18px var(--sans);letter-spacing:0;margin:0 0 14px}
+  #repBody h2{color:var(--amber);font:700 11px var(--sans);letter-spacing:.1em;
+              text-transform:uppercase;margin:24px 0 10px}
+  #repBody h3{color:var(--ink);font:600 14px var(--sans);margin:16px 0 6px}
+  #repBody p{margin:0 0 11px}
+  #repBody li{margin:0 0 6px 18px}
+  #repBody code{color:var(--amber);background:rgba(255,176,0,.08);padding:1px 5px;
+    font:400 12px var(--mono);border-radius:4px}
+  #repBody pre{background:var(--inset);border-radius:8px;padding:13px;overflow-x:auto;
+    margin:0 0 12px;font:400 12px var(--mono)}
+  #repBody a{color:var(--amber);text-decoration:none;border-bottom:1px solid var(--amber-line)}
+  #repBody strong{color:var(--ink);font-weight:600}
+  .ev{font:400 11px var(--mono);color:var(--ink-2);padding:4px 0;border-bottom:1px solid var(--faint)}
+  .ev .et{color:var(--mut);margin-right:10px}
+  .ev.tool{color:var(--amber)}
+  .ev.sys{color:#8ea0c0}
+  #critBox{margin-top:22px;background:rgba(255,90,72,.06);padding:15px;border-radius:12px;
+    box-shadow:inset 0 0 0 1px rgba(255,90,72,.28)}
+  #critBox .cb-t{font:700 9px var(--sans);letter-spacing:.12em;text-transform:uppercase;
+    color:var(--bad);margin-bottom:9px}
+  #critBox p{color:var(--ink)}
+  #critBox button{margin-top:10px;background:var(--amber);border:none;color:#1a1205;
+    font:700 9px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:9px 15px;
+    cursor:pointer;border-radius:8px}
+  #critBox button:hover{background:var(--amber-2)}
+
+  /* ------------------------------------------------ tour mode */
+  #tourHi{position:fixed;z-index:70;pointer-events:none;border:1px solid var(--amber);
+    border-radius:3px;display:none;transition:all .5s cubic-bezier(.4,0,.2,1);
+    box-shadow:0 0 0 9999px rgba(5,7,10,.78), 0 0 26px rgba(255,176,0,.28)}
+  #tourHi.on{display:block}
+  #tourCard{position:fixed;z-index:71;width:372px;max-width:88vw;background:var(--card);
+    border-radius:16px;padding:18px 20px;box-shadow:var(--sh-lg);display:none;
+    transition:top .5s cubic-bezier(.4,0,.2,1),left .5s cubic-bezier(.4,0,.2,1)}
+  #tourCard.on{display:block}
+  .tc-num{font:600 9px var(--mono);letter-spacing:.16em;color:var(--amber);margin-bottom:9px}
+  .tc-title{font:700 15px var(--sans);color:var(--ink);margin-bottom:8px}
+  .tc-body{font:400 12.5px/1.7 var(--sans);color:var(--ink-2)}
+  .tc-btns{display:flex;gap:8px;margin-top:15px;align-items:center}
+  .tc-btns button{background:var(--card-2);border:none;border-radius:8px;
+    font:600 9px var(--sans);letter-spacing:.06em;text-transform:uppercase;
+    padding:8px 13px;cursor:pointer;color:var(--ink-2);transition:.15s}
+  .tc-btns button:hover{color:var(--ink);background:#2d323c}
+  .tc-btns .tc-next{color:#1a1205;background:var(--amber)}
+  .tc-btns .tc-next:hover{background:var(--amber-2);color:#1a1205}
+  .tc-dots{margin-left:auto;display:flex;gap:4px}
+  .tc-dots i{width:5px;height:5px;border-radius:50%;background:#3a4048}
+  .tc-dots i.on{background:var(--amber)}
+  .tour-pulse{animation:tourpulse 1.1s ease-in-out infinite}
+  @keyframes tourpulse{50%{box-shadow:0 0 18px rgba(255,176,0,.55);border-color:var(--amber);color:var(--amber)}}
+
+  @media (max-width:960px){
+    #main{flex-direction:column}
+    #stage{flex:none;padding:12px 0}
+    #rig3d{height:300px}
+    #console{max-width:none;border-left:none;border-top:1px solid var(--line)}
+    #wordmark{letter-spacing:.3em}
+  }
+</style>
+</head>
+<body class="idle">
+<canvas id="stars"></canvas>
+<div id="nebula"></div>
+
+<header id="hud">
+  <div id="wordmark">TA<b>R</b>S</div>
+  <div id="statusline">
+    <span class="hudlabel"><i class="dot" id="dotBrain"></i>BRAIN</span>
+    <span class="hudlabel"><i class="dot" id="dotVoice"></i>VOICE</span>
+    <span class="hudlabel"><i class="dot" id="dotCli"></i>CLI</span>
+    <span class="hudlabel"><i class="dot" id="dotHue"></i>HUE</span>
+  </div>
+  <span id="stateTag">IDLE</span>
+  <div id="clock">T+ 00:00</div>
+  <div class="dial"><div class="row"><span class="hudlabel">HUMOR</span><span class="val" id="humorVal">75%</span></div>
+    <input type="range" id="humor" min="0" max="100" value="75"></div>
+  <div class="dial"><div class="row"><span class="hudlabel">HONESTY</span><span class="val" id="honestyVal">90%</span></div>
+    <input type="range" id="honesty" min="0" max="100" value="90"></div>
+  <button id="toolsBtn" class="hudbtn" title="connect real tools — Gmail, Notion, Slack…">⚒ TOOLS</button>
+  <button id="setBtn" class="hudbtn" title="voice, model, permissions">⚙ SETTINGS</button>
+  <button id="tourBtn" class="hudbtn" title='or just ask "what can you do?"'>TOUR</button>
+  <button id="liveBtn" class="hudbtn" style="display:none">📡 LIVE</button>
+  <button id="hfBtn" class="hudbtn">HANDS-FREE OFF</button>
+  <button id="audioBtn" class="hudbtn">AUDIO OFF</button>
+</header>
+
+<div id="main">
+  <section id="stage">
+    <div id="rig3d"><canvas id="tars3d"></canvas></div>
+    <div id="tarsline"></div>
+    <div id="channel">◉ CHANNEL OPEN — JUST TALK, NO WAKE WORD</div>
+  </section>
+
+  <section id="console">
+    <div class="sect">
+      <h2>MISSION BRIEFING</h2>
+      <div id="briefWrap">
+        <input id="brief" placeholder="Type a job for me… or just ask a question." autocomplete="off">
+        <button id="seeBtn" class="sqbtn" title="TARS looks at your screen">🖥</button>
+        <button id="pipChip" class="sqbtn" title="pop TARS out — a mini TARS floats over every app while you share" style="display:none">🤖</button>
+        <button id="mic" class="sqbtn" title="tap, talk, and I'll take it from there">◉</button>
+      </div>
+      <div class="btnrow">
+        <button class="btn" id="askBtn">ASK — QUICK ANSWER</button>
+        <button class="btn primary" id="deployBtn">DEPLOY — HE DOES THE WORK</button>
+      </div>
+      <div id="modeHelp"><b>ASK</b> answers now · <b>DEPLOY</b> does the work ·
+        <b>"build me…"</b> ships an app · <b>"squad:"</b> splits the job · <b>"do it"</b> fires a queued send</div>
+      <div id="pendingChip"><span class="pc-t">⚡ PENDING ACTION — NOTHING SENT YET</span>
+        <span id="pendingDesc"></span>
+        <div class="pc-btns"><button id="pcDo">DO IT</button>
+        <button class="pc-cancel" id="pcCancel">CANCEL</button></div></div>
+    </div>
+    <div class="sect" id="ideasSect">
+      <h2 class="fold" id="ideasH">MISSION IDEAS</h2>
+      <div class="sbody" id="chips"></div>
+    </div>
+    <div class="sect" id="sortSect">
+      <h2 class="fold" id="sortH">JOBS<button class="h2btn" id="clearBtn">CLEAR DONE</button></h2>
+      <div class="sbody" id="sorties"><div id="empty">Nothing running yet — give me a job above.</div></div>
+    </div>
+    <div id="feed"></div>
+  </section>
+</div>
+
+<footer id="hint">
+  <span><span class="k">ENTER</span>&nbsp;ASK</span>
+  <span><span class="k">⇧ENTER</span>&nbsp;DEPLOY</span>
+  <span><span class="k">◉</span>&nbsp;TALK</span>
+  <span><span class="k">🖥</span>&nbsp;SCREEN</span>
+  <span><span class="k">"SQUAD:"</span>&nbsp;SPLIT ACROSS ROBOTS</span>
+  <span><span class="k">"WHAT CAN YOU DO?"</span>&nbsp;TOUR</span>
+  <span style="margin-left:auto">JOBS RUN IN THE BACKGROUND · NOTHING SENDS WITHOUT YOU</span>
+</footer>
+
+<div id="setOverlay">
+  <div id="setPanel">
+    <div class="set-head"><span>⚙ SETTINGS</span><button id="setClose">CLOSE</button></div>
+    <div class="set-sect"><div class="set-lbl">TARS'S VOICE</div>
+      <div class="set-hint">Pick a voice — it speaks a test line when you choose it.</div>
+      <div id="setVoices" class="set-grid"></div></div>
+    <div class="set-sect"><div class="set-lbl">BRAIN — THE MODEL TARS THINKS WITH</div>
+      <div class="set-hint">Smarter = better answers, slower. Faster = quicker, cheaper.</div>
+      <div id="setModels" class="set-grid"></div></div>
+    <div class="set-sect"><div class="set-lbl">WHAT TARS IS ALLOWED TO DO</div>
+      <div id="setTrust" class="set-grid"></div></div>
+    <div class="set-sect"><div class="set-lbl">TAKEOVER SPEED — HOW FAST HE DRIVES YOUR SCREEN</div>
+      <div class="set-hint">Each click is a full round-trip; the model sets the pace. Faster = snappier but slightly less precise.</div>
+      <div id="setSpeed" class="set-grid"></div></div>
+  </div>
+</div>
+
+<div id="toolsOverlay">
+  <div id="toolsPanel">
+    <div class="set-head"><span>⚒ TOOLS — GIVE THE ROBOTS HANDS</span><button id="toolsClose">CLOSE</button></div>
+    <div class="set-sect" style="padding-top:2px">
+      <div class="set-hint">Research-safe tools work on every job. Action tools only fire on a
+        confirmed job — after you say "do it". Nothing sends without you. You can also just tell
+        TARS: "add Notion".</div>
+      <div id="toolGrid"></div>
+    </div>
+  </div>
+</div>
+
+<div id="tourHi"></div>
+<div id="tourCard">
+  <div class="tc-num" id="tcNum">01 / 12</div>
+  <div class="tc-title" id="tcTitle"></div>
+  <div class="tc-body" id="tcBody"></div>
+  <div class="tc-btns">
+    <button id="tcBack">◂ BACK</button>
+    <button class="tc-next" id="tcNext">NEXT ▸</button>
+    <button id="tcSkip">END TOUR</button>
+    <div class="tc-dots" id="tcDots"></div>
+  </div>
+</div>
+
+<div id="driveCard">
+  <div class="dc-head"><span class="dc-dot"></span><span id="dcTitle">TARS IS DRIVING</span>
+    <button id="dcStop">STOP</button></div>
+  <div id="dcTask"></div>
+  <div id="dcFeed"></div>
+</div>
+<div id="jobCards"></div>
+<div id="overlay">
+  <div id="report">
+    <div id="repHead">
+      <span class="t">MISSION REPORT</span>
+      <span class="meta" id="repMeta"></span>
+      <button id="appBtn" style="display:none;color:var(--amber);border-color:var(--amber-dim)">OPEN APP ↗</button>
+      <button id="abortBtn" style="display:none;color:var(--bad);border-color:var(--bad)">ABORT</button>
+      <button id="repClose">CLOSE</button>
+    </div>
+    <div id="repBody"></div>
+  </div>
+</div>
+
+<script src="/static/three.min.js"></script>
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---------------- starfield ---------------- */
+(()=>{const c=$("#stars"),x=c.getContext("2d");let W,H,stars=[];
+function size(){W=c.width=innerWidth;H=c.height=innerHeight;
+  stars=Array.from({length:190},()=>({x:Math.random()*W,y:Math.random()*H,
+    r:Math.random()*1.2+.25,a:Math.random()*.55+.2,tw:Math.random()*.018+.004,p:Math.random()*6}));}
+size();addEventListener("resize",size);
+(function draw(t){x.clearRect(0,0,W,H);
+  for(const s of stars){const a=s.a*(0.65+0.35*Math.sin(t*s.tw*0.06+s.p));
+    x.globalAlpha=a;x.fillStyle="#eceae4";x.beginPath();x.arc(s.x,s.y,s.r,0,7);x.fill();}
+  x.globalAlpha=1;requestAnimationFrame(draw);})(0);})();
+
+/* ================= SFX — procedural WebAudio (off; no UI) ================= */
+const SFX={on:false,gain:null,drone:null};
+function sfxNode(){ // shares actx (created on first user gesture)
+  if(!actx)return null;
+  if(!SFX.gain){SFX.gain=actx.createGain();SFX.gain.gain.value=.5;SFX.gain.connect(actx.destination);}
+  return SFX.gain;
+}
+function sfxServo(f0=900,f1=280,dur=.16,vol=.035){
+  const out=sfxNode();if(!out||!SFX.on)return;
+  try{const t=actx.currentTime,o=actx.createOscillator(),bp=actx.createBiquadFilter(),g=actx.createGain();
+  o.type="sawtooth";o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(f1,t+dur);
+  bp.type="bandpass";bp.frequency.value=1100;bp.Q.value=2.2;
+  g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  o.connect(bp).connect(g).connect(out);o.start(t);o.stop(t+dur+.02);}catch(e){}
+}
+function sfxThud(vol=.09){
+  const out=sfxNode();if(!out||!SFX.on)return;
+  try{const t=actx.currentTime,o=actx.createOscillator(),g=actx.createGain();
+  o.type="sine";o.frequency.setValueAtTime(64,t);o.frequency.exponentialRampToValueAtTime(38,t+.14);
+  g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.0001,t+.16);
+  o.connect(g).connect(out);o.start(t);o.stop(t+.18);}catch(e){}
+}
+function sfxStatic(dur=.45,vol=.04){
+  const out=sfxNode();if(!out||!SFX.on)return;
+  try{const t=actx.currentTime,n=actx.sampleRate*dur,buf=actx.createBuffer(1,n,actx.sampleRate),
+  d=buf.getChannelData(0);for(let i=0;i<n;i++)d[i]=Math.random()*2-1;
+  const src=actx.createBufferSource(),bp=actx.createBiquadFilter(),g=actx.createGain();
+  src.buffer=buf;bp.type="bandpass";bp.frequency.value=1900;bp.Q.value=.7;
+  g.gain.setValueAtTime(vol,t);g.gain.linearRampToValueAtTime(.0001,t+dur);
+  src.connect(bp).connect(g).connect(out);src.start(t);}catch(e){}
+}
+function sfxDrone(on){
+  const out=sfxNode();if(!out)return;
+  if(on&&SFX.on&&!SFX.drone){
+    try{const g=actx.createGain();g.gain.value=.012;
+    const o1=actx.createOscillator(),o2=actx.createOscillator();
+    o1.type="triangle";o1.frequency.value=55;o2.type="triangle";o2.frequency.value=55.6;
+    o1.connect(g);o2.connect(g);g.connect(out);o1.start();o2.start();
+    SFX.drone={o1,o2,g};}catch(e){}
+  }else if(!on&&SFX.drone){
+    try{SFX.drone.o1.stop();SFX.drone.o2.stop();}catch(e){}
+    SFX.drone=null;
+  }
+}
+
+/* ================= 3D — TARS + the fleet ================= */
+const T3={mode:"idle",t:0,boot:0,ready:false,celebrate:0,listenUntil:0,flare:0};
+let FLEET={};                 // mission id -> robot
+let three=null;               // scene refs
+// background work lanes BEHIND TARS (negative z = away from camera → robots read
+// smaller with distance, exactly his spec). First robot goes right, second left.
+const FLEET_HOMES=[[3.4,-6.5],[-3.4,-6.5],[5.8,-6.5],[-5.8,-6.5]];
+const LANE_HALF=1.1;
+function makeSlabTexture(){
+  const tc=document.createElement("canvas");tc.width=128;tc.height=1024;
+  const g=tc.getContext("2d");
+  g.fillStyle="#6b727d";g.fillRect(0,0,128,1024);
+  for(let i=0;i<2200;i++){g.fillStyle=`rgba(255,255,255,${Math.random()*.05})`;
+    g.fillRect(Math.random()*128,Math.random()*1024,1,Math.random()*22);}
+  for(let i=0;i<1600;i++){g.fillStyle=`rgba(0,0,0,${Math.random()*.09})`;
+    g.fillRect(Math.random()*128,Math.random()*1024,1,Math.random()*16);}
+  g.fillStyle="rgba(10,12,16,.9)";[256,512,768].forEach(y=>g.fillRect(4,y-2,120,4));
+  g.strokeStyle="rgba(255,255,255,.25)";g.lineWidth=2;g.strokeRect(1,1,126,1022);
+  return new THREE.CanvasTexture(tc);
+}
+// brushed-metal slab with big engraved T-A-R-S down its 4 cells (one letter per cell)
+function makeNameTexture(){
+  const tc=document.createElement("canvas");tc.width=128;tc.height=1024;
+  const g=tc.getContext("2d");
+  g.fillStyle="#6b727d";g.fillRect(0,0,128,1024);
+  for(let i=0;i<2200;i++){g.fillStyle=`rgba(255,255,255,${Math.random()*.05})`;
+    g.fillRect(Math.random()*128,Math.random()*1024,1,Math.random()*22);}
+  for(let i=0;i<1600;i++){g.fillStyle=`rgba(0,0,0,${Math.random()*.09})`;
+    g.fillRect(Math.random()*128,Math.random()*1024,1,Math.random()*16);}
+  g.fillStyle="rgba(10,12,16,.9)";[256,512,768].forEach(y=>g.fillRect(4,y-2,120,4));
+  g.strokeStyle="rgba(255,255,255,.25)";g.lineWidth=2;g.strokeRect(1,1,126,1022);
+  // ENGRAVED dark letters, one per cell (T top → S bottom) — pressed INTO the metal,
+  // like the reference: top edge shadowed, bottom edge lit, dark recessed body.
+  g.textAlign="center";g.textBaseline="middle";
+  g.font="800 90px -apple-system,'SF Pro Display','Segoe UI',Arial,sans-serif";
+  ["T","A","R","S"].forEach((ch,i)=>{
+    const y=128+i*256, x=64;
+    g.fillStyle="rgba(6,8,12,.45)"; g.fillText(ch,x,y-2.5);      // top shadow (groove depth)
+    g.fillStyle="rgba(238,242,247,.32)";g.fillText(ch,x,y+3);    // bottom light lip (catches light)
+    g.fillStyle="rgba(46,51,59,.94)";g.fillText(ch,x,y);         // dark recessed body
+  });
+  const t=new THREE.CanvasTexture(tc);t.anisotropy=8;return t;
+}
+function makeLabel(name){
+  const c=document.createElement("canvas");c.width=256;c.height=64;
+  const g=c.getContext("2d");g.font="700 34px Menlo,monospace";g.textAlign="center";
+  g.fillStyle="rgba(255,176,0,.95)";g.fillText(name,128,42);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),
+    transparent:true,depthWrite:false}));
+  sp.scale.set(1.5,.38,1);sp.position.y=2.35;return sp;
+}
+function makeRobot(name,isMain,scene,tex,nameTex){
+  const mat=new THREE.MeshStandardMaterial({map:tex,color:0xb9c0cc,metalness:.75,
+    roughness:.38,transparent:true,opacity:isMain?1:0});
+  // main TARS gets the lettered slab (index 2, a clean front slab)
+  const nameMat=(isMain&&nameTex)?new THREE.MeshStandardMaterial({map:nameTex,color:0xc4cbd6,
+    metalness:.7,roughness:.4,transparent:true,opacity:1}):mat;
+  const group=new THREE.Group();
+  const geo=new THREE.BoxGeometry(.56,3.55,.30);
+  const slabs=[];
+  [-0.96,-0.32,0.32,0.96].forEach((x,idx)=>{
+    const s=new THREE.Mesh(geo,idx===2?nameMat:mat);s.position.x=x;s.userData.homeX=x;
+    group.add(s);slabs.push(s);});
+  const led=new THREE.Mesh(new THREE.SphereGeometry(.045,12,12),
+    new THREE.MeshBasicMaterial({color:0xffb000,transparent:true}));
+  led.position.set(-0.32,1.45,.17);group.add(led);
+  let ledGlow=null;
+  if(isMain){ledGlow=new THREE.PointLight(0xffb000,.6,2.5);
+    ledGlow.position.copy(led.position);group.add(ledGlow);}
+  if(!isMain)group.add(makeLabel(name));
+  group.position.y=2.05;
+  scene.add(group);
+  return {name,isMain,group,slabs,led,ledGlow,mat,
+    st:{t:Math.random()*10,phase:"walk",phaseT:0,dir:Math.random()<.5?1:-1,
+        home:0,spawnT:isMain?-1:0,despawn:-1,roll:0,fan:0,lastStep:0}};
+}
+(function init3d(){
+  if(!window.THREE)return;
+  try{
+    const box=$("#rig3d"),cv=$("#tars3d");
+    const renderer=new THREE.WebGLRenderer({canvas:cv,alpha:true,antialias:true});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.toneMapping=THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure=1.35;
+    const scene=new THREE.Scene();
+    scene.fog=new THREE.Fog(0x11141a,9,28);   // far enough that background workers stay readable
+    const cam=new THREE.PerspectiveCamera(38,1,0.1,60);
+    cam.position.set(0,2.3,7.6);
+    const amb=new THREE.AmbientLight(0xaab6c8,1.2);scene.add(amb);
+    const key=new THREE.DirectionalLight(0xfff2dd,2.0);key.position.set(2.5,5,6);scene.add(key);
+    const front=new THREE.DirectionalLight(0xdde6f2,.85);front.position.set(0,2,9);scene.add(front);
+    const fill=new THREE.DirectionalLight(0x9fb4d8,.55);fill.position.set(-4,2,5);scene.add(fill);
+    const amberPt=new THREE.PointLight(0xffb000,.9,12);amberPt.position.set(-2.6,1.2,2.6);scene.add(amberPt);
+    const grid=new THREE.GridHelper(40,60,0x3a4150,0x232833);scene.add(grid);
+    // shared texture + main robot
+    const tex=makeSlabTexture();
+    const nameTex=makeNameTexture();
+    const main=makeRobot("TARS",true,scene,tex,nameTex);
+    // boot: scatter the slabs, assemble over ~1.8s
+    main.slabs.forEach((s,i)=>{s.position.y=3.5+i*1.1;s.rotation.z=(Math.random()-.5)*2;
+      s.rotation.x=(Math.random()-.5)*1.4;});
+    main.mat.opacity=0;
+    // contact shadows (one per robot, simple shared approach: main only + fleet fake via opacity)
+    const shTex=(()=>{const c2=document.createElement("canvas");c2.width=c2.height=128;
+      const g2=c2.getContext("2d");const gr=g2.createRadialGradient(64,64,6,64,64,62);
+      gr.addColorStop(0,"rgba(0,0,0,.55)");gr.addColorStop(1,"rgba(0,0,0,0)");
+      g2.fillStyle=gr;g2.fillRect(0,0,128,128);return new THREE.CanvasTexture(c2);})();
+    function makeShadow(){const m=new THREE.Mesh(new THREE.PlaneGeometry(3.4,1.4),
+      new THREE.MeshBasicMaterial({map:shTex,transparent:true,depthWrite:false}));
+      m.rotation.x=-Math.PI/2;m.position.y=.01;scene.add(m);return m;}
+    const mainShadow=makeShadow();
+    let px=0,py=0;
+    addEventListener("pointermove",e=>{px=(e.clientX/innerWidth-.5);py=(e.clientY/innerHeight-.5);});
+    function resize(){const w=box.clientWidth||1,h=box.clientHeight||1;
+      renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}
+    resize();new ResizeObserver(resize).observe(box);
+    const lerp=(a,b,k)=>a+(b-a)*k;
+    // morse "STAY" for the idle LED — dot=1u dash=3u gaps: intra 1u, letter 3u, loop 16u
+    const MORSE=(()=>{const u=.16,seq=[];const put=(on,len)=>seq.push({on,len:len*u});
+      const ch={S:"...",T:"-",A:".-",Y:"-.--"};
+      for(const L of "STAY"){for(const sym of ch[L]){put(true,sym==="."?1:3);put(false,1);}
+        seq[seq.length-1].len=3*u;}
+      seq[seq.length-1].len=16*u;
+      const total=seq.reduce((a,s)=>a+s.len,0);return {seq,total};})();
+    function morseOn(t){let m=t%MORSE.total;
+      for(const s of MORSE.seq){if(m<s.len)return s.on;m-=s.len;}return true;}
+    const clock=new THREE.Clock();
+    let spin=0;
+    three={scene,grid,fog:scene.fog};
+    /* Deploy journey (his spec 2026-07-08): the robot appears NEXT to TARS,
+       immediately walks off to the side and BACK behind him — shrinking with
+       distance — then paces back and forth in the background while it works. */
+    function fleetRobot(id,name){
+      if(FLEET[id])return FLEET[id];
+      const r=makeRobot(name,false,scene,tex);
+      const taken=new Set(Object.values(FLEET).map(o=>o.st.home));
+      const slot=FLEET_HOMES.find(h=>!taken.has(h[0]))||
+                 FLEET_HOMES[Object.keys(FLEET).length%FLEET_HOMES.length];
+      const side=Math.sign(slot[0])||1;
+      r.st.home=slot[0];r.st.homeZ=slot[1];r.st.phase="drop";
+      // materialize right beside TARS, in frame
+      r.group.position.set(2.0*side,4.6,1.1);
+      r.shadow=makeShadow();
+      r.shadow.position.set(2.0*side,.01,1.1);
+      FLEET[id]=r;sfxServo(1200,300,.35,.05);
+      return r;
+    }
+    function updateRobot(r,dt){
+      const st=r.st,g=r.group;st.t+=dt;
+      if(st.despawn>=0){st.despawn+=dt;
+        g.position.y=lerp(g.position.y,-2.5,dt*1.6);
+        r.mat.opacity=lerp(r.mat.opacity,0,dt*2.4);
+      }
+      else if(st.phase==="drop"){                    // fast drop-in beside TARS
+        st.phaseT=(st.phaseT||0)+dt;
+        g.position.y=lerp(g.position.y,2.05,dt*7);
+        r.mat.opacity=lerp(r.mat.opacity,1,dt*7);
+        if(st.phaseT>0.55){st.phase="depart";st.phaseT=0;sfxThud(.05);}
+      }
+      else if(st.phase==="depart"){                  // walk away behind TARS, shrinking w/ distance
+        st.phaseT+=dt;
+        g.position.x=lerp(g.position.x,st.home,dt*1.15);
+        g.position.z=lerp(g.position.z,st.homeZ,dt*0.95);
+        g.position.y=2.05+Math.sin(st.t*6)*.035;
+        const yaw=Math.atan2(st.home-g.position.x,st.homeZ-g.position.z);
+        g.rotation.y=lerp(g.rotation.y,yaw,dt*3);
+        if(Math.abs(g.position.z-st.homeZ)<0.5||st.phaseT>6){
+          st.phase="work";st.phaseT=0;st.dir=1;st.turnAt=6+Math.random()*4;st.spin=0;}
+      }
+      else{                                          // work: pace the back lane
+        st.phaseT+=dt;
+        g.position.x+=st.dir*0.85*dt;
+        const min=st.home-1.7,max=st.home+1.7;
+        if(g.position.x>=max){g.position.x=max;st.dir=-1;}
+        if(g.position.x<=min){g.position.x=min;st.dir=1;}
+        g.position.z=lerp(g.position.z,st.homeZ,dt);
+        g.position.y=2.05+Math.sin(st.t*6)*.035;
+        st.turnAt-=dt;                               // occasional slow "checking around" turn
+        if(st.turnAt<=0){st.spin=(st.spin||0)+Math.PI*2;st.turnAt=8+Math.random()*5;}
+        st.spin=lerp(st.spin||0,0,dt*1.1);
+        g.rotation.y=lerp(g.rotation.y,st.dir>0?Math.PI/2:-Math.PI/2,dt*2.2)+(st.spin||0);
+      }
+      const walking=st.phase==="depart"||st.phase==="work";
+      g.rotation.z=lerp(g.rotation.z,walking?Math.sin(st.t*6)*.03:0,dt*3);
+      if(walking&&Math.floor(st.t*6/(Math.PI*2))!==st.lastStep){
+        st.lastStep=Math.floor(st.t*6/(Math.PI*2));sfxThud(.025);}
+      r.slabs.forEach((s,i)=>{
+        s.rotation.z=lerp(s.rotation.z,0,dt*4);
+        s.position.x=lerp(s.position.x,s.userData.homeX,dt*4);
+        const gaitSwing=walking?((i===0?1:i===3?-1:0)*Math.sin(st.t*6)*.34):0;
+        s.rotation.x=lerp(s.rotation.x,gaitSwing,dt*5);
+      });
+      r.led.material.opacity=.6+Math.sin(st.t*6)*.4;
+      if(r.shadow){r.shadow.position.x=g.position.x;r.shadow.position.z=g.position.z;
+        const sc=Math.max(.4,1-Math.abs(g.position.y-2.05)*.25);
+        r.shadow.scale.set(sc,sc,1);
+        r.shadow.material.opacity=r.mat.opacity;}
+      return st.despawn>=0&&st.despawn>2.2;          // remove when fade-out is done
+    }
+    let freqData=null,rafId=0;
+    function loop(){
+      rafId=requestAnimationFrame(loop);
+      const dt=Math.min(clock.getDelta(),.05);T3.t+=dt;
+      const t=T3.t,m=T3.mode;
+      // ---- boot assembly
+      if(T3.boot<1){T3.boot=Math.min(1,T3.boot+dt/1.8);
+        main.mat.opacity=T3.boot;
+        main.slabs.forEach((s,i)=>{const k=Math.min(1,Math.max(0,(T3.boot*2.2)-i*.28));
+          s.position.y=lerp(s.position.y,0,k*.16);
+          s.rotation.z=lerp(s.rotation.z,0,k*.18);
+          s.rotation.x=lerp(s.rotation.x,0,k*.18);});
+        if(T3.boot===1){sfxServo(1400,400,.4,.05);sfxThud(.08);}
+      }
+      // ---- main TARS behavior
+      const humor=+($("#humor").value||75);
+      const listening=Date.now()<T3.listenUntil&&m!=="speak";
+      let ty=2.05,rotY=0,rotX=0,rotZ=0,amp=0;
+      const still=humor<=10?0:1;
+      if(T3.flare>0)T3.flare-=dt;          // deploy = LED flare, no dash, no spin
+      if(T3.celebrate>0){T3.celebrate-=dt; // good debrief = gentle double-bob
+        ty=2.05+Math.abs(Math.sin(t*5))*.18;
+      }else if(m==="speak"){
+        // frequency-split voice reaction: lows sway the body, mids pulse inner slabs
+        let low=0,mid=0;
+        if(analyser){try{freqData=freqData||new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(freqData);
+          for(let i=1;i<7;i++)low+=freqData[i];low/=6*255;
+          for(let i=9;i<42;i++)mid+=freqData[i];mid/=33*255;}catch(e){}}
+        if(!low&&!mid){const f=(Math.sin(t*9)*.5+.5)*.4;low=f*.5;mid=f;}
+        amp=Math.min(mid*2.6,1);
+        rotZ=low*.5*.12;
+        rotY=Math.sin(t*.3)*.12;
+        ty=2.05+Math.sin(t*.9)*.05;
+      }else if(listening){
+        rotX=.1;rotZ=.1;rotY=lerp(main.group.rotation.y,px*.4,.1);
+      }else{ // idle
+        ty=2.05+Math.sin(t*.8)*.07*still;
+        rotY=Math.sin(t*.22)*.2*still;
+      }
+      main.group.position.x=lerp(main.group.position.x,0,dt*2);
+      main.group.position.y=lerp(main.group.position.y,ty,dt*3);
+      spin=lerp(spin,0,dt*2.2);
+      main.group.rotation.y=lerp(main.group.rotation.y,rotY,dt*3)+spin;
+      main.group.rotation.x=lerp(main.group.rotation.x,rotX,dt*3);
+      main.group.rotation.z=lerp(main.group.rotation.z,rotZ,dt*4);
+      const pulse=(m==="speak")?amp*.55:0;
+      main.slabs[1].position.z=lerp(main.slabs[1].position.z,pulse,dt*14);
+      main.slabs[2].position.z=lerp(main.slabs[2].position.z,-pulse*.7,dt*14);
+      // LED: deploy flare > speak = voice · listen = steady · idle = morse "STAY"
+      if(T3.flare>0){main.led.material.opacity=1;
+        if(main.ledGlow)main.ledGlow.intensity=2.4;}
+      else if(m==="speak"){main.led.material.opacity=.6+amp*.4;
+        if(main.ledGlow)main.ledGlow.intensity=.4+amp*2.2;}
+      else if(listening){main.led.material.opacity=1;
+        if(main.ledGlow)main.ledGlow.intensity=1.4;}
+      else{const on=morseOn(t);main.led.material.opacity=on?1:.08;
+        if(main.ledGlow)main.ledGlow.intensity=on?.9:.05;}
+      mainShadow.position.x=main.group.position.x;
+      const sc=1-Math.min(Math.abs(main.group.position.y-2.05)*.6,.2);
+      mainShadow.scale.set(sc,sc,1);
+      // ---- fleet
+      for(const id of Object.keys(FLEET)){
+        if(updateRobot(FLEET[id],dt)){
+          scene.remove(FLEET[id].group);scene.remove(FLEET[id].shadow);delete FLEET[id];}
+      }
+      cam.position.x=lerp(cam.position.x,px*.9,dt*2);
+      cam.position.y=lerp(cam.position.y,2.3-py*.5,dt*2);
+      cam.lookAt(main.group.position.x*.35,1.95,0);
+      renderer.render(scene,cam);
+      if(window._pipHook)window._pipHook();   // copy THIS frame (same task — WebGL safe)
+    }
+    loop();
+    T3.ready=true;
+    T3._fleetRobot=fleetRobot;
+    T3._canvas=cv;
+    // rAF never fires on a hidden tab — while the mini-TARS floats, tick manually
+    // (cancel+call keeps exactly ONE pending rAF, so no duplicate loops on return)
+    T3._bgTick=()=>{if(document.hidden){cancelAnimationFrame(rafId);loop();}};
+  }catch(e){console.warn("3D init failed",e);}
+})();
+function tarsMode(m){T3.mode=m;}
+function tarsLaunch(){if(T3.ready){T3.flare=1.2;sfxServo(700,1100,.35,.04);}}
+function tarsCelebrate(){if(T3.ready)T3.celebrate=1.7;}
+function syncFleet(){
+  if(!T3.ready||!T3._fleetRobot)return;
+  const active={};
+  for(const m of Object.values(MISSIONS))
+    if(m.status==="EN ROUTE"&&m.kind!=="SQUAD")active[m.id]=m.agent||"CASE";
+  for(const[id,name]of Object.entries(active))T3._fleetRobot(id,name);
+  for(const id of Object.keys(FLEET))
+    if(!active[id]&&id!=="tour-demo"&&FLEET[id].st.despawn<0)FLEET[id].st.despawn=0;
+}
+
+/* ---------------- state machine ---------------- */
+let speakingN=0, rtcLive=false;   // rtcLive = GPT Realtime call in progress
+function setBody(){
+  const working=Object.values(MISSIONS).some(m=>m.status==="EN ROUTE");
+  const st=rtcLive?"speaking":(speakingN>0?"speaking":(working?"working":"idle"));
+  document.body.className=st;
+  tarsMode((rtcLive||speakingN>0)?"speak":"idle");   // main TARS talks; the FLEET works
+  $("#stateTag").textContent=rtcLive?"◉ LIVE CALL":(speakingN>0?"SPEAKING":(working?"ON A JOB":"IDLE"));
+  syncFleet();
+}
+/* ------------- floating mini-TARS (Picture-in-Picture over EVERY app) -------------
+   While the screen link is open, a small always-on-top TARS window rides along —
+   slabs, state, voice bars, and his last spoken line — visible on Google, Docs,
+   anywhere. Canvas → captureStream → video → requestPictureInPicture. */
+let pipCanvas=null,pipVideo=null,pipTimer=null,pipCaption="Standing by.",pipOn=false;
+function pipDraw(){   // pure 3D: the LIVE WebGL frame, contain-fit — whole robot, small
+  if(!pipCanvas||!T3.ready||!T3._canvas)return;
+  const src=T3._canvas;
+  if(!src.width||!src.height)return;
+  const x=pipCanvas.getContext("2d"),pw=pipCanvas.width,ph=pipCanvas.height;
+  x.fillStyle="#0c0d11";x.fillRect(0,0,pw,ph);
+  // center band of the stage (78% width, full height), FIT inside — never cropped
+  const sw=src.width*.78, sh=src.height;
+  const sx=(src.width-sw)/2, sy=0;
+  const k=Math.min(pw/sw,ph/sh);
+  const dw=sw*k, dh=sh*k;
+  x.drawImage(src,sx,sy,sw,sh,(pw-dw)/2,(ph-dh)/2,dw,dh);
+}
+async function pipOpen(){
+  if(pipOn)return true;
+  if(!document.pictureInPictureEnabled||!T3.ready)return false;
+  try{
+    if(!pipCanvas){pipCanvas=document.createElement("canvas");
+      pipCanvas.width=220;pipCanvas.height=300;}   // small — a desk-toy TARS
+    pipDraw();
+    if(!pipVideo){
+      pipVideo=document.createElement("video");
+      pipVideo.muted=true;pipVideo.playsInline=true;pipVideo.style.display="none";
+      pipVideo.srcObject=pipCanvas.captureStream(24);
+      document.body.appendChild(pipVideo);
+    }
+    await pipVideo.play();
+    await pipVideo.requestPictureInPicture();
+    pipOn=true;
+    window._pipHook=pipDraw;                  // copy every rendered frame (same task)
+    // hidden tab = frozen rAF → pump the 3D loop manually so he keeps moving
+    pipTimer=setInterval(()=>{if(T3._bgTick)T3._bgTick();},100);
+    pipVideo.addEventListener("leavepictureinpicture",()=>pipClose(false),{once:true});
+    pipUI();
+    return true;
+  }catch(e){pipUI();return false;}
+}
+function pipClose(exit){
+  pipOn=false;window._pipHook=null;
+  if(pipTimer){clearInterval(pipTimer);pipTimer=null;}
+  if(exit!==false){try{if(document.pictureInPictureElement)document.exitPictureInPicture();}catch(e){}}
+  pipUI();
+}
+let presOn=false;   // desktop TARS (native transparent window — presence.py)
+function pipUI(){const b=$("#pipChip");if(!b)return;
+  b.style.display=seeStream?"":"none";b.classList.toggle("on",presOn);
+  b.title=presOn?"desktop TARS is out — click to dismiss him":"summon the desktop TARS";}
+
+function tarsLine(txt,amber){const el=$("#tarsline");el.innerHTML="";
+  pipCaption=txt;                       // the floating mini-TARS mirrors his last line
+  const span=document.createElement("span");if(amber)span.className="amber";el.appendChild(span);
+  let i=0;const t=setInterval(()=>{span.textContent=txt.slice(0,++i);if(i>=txt.length)clearInterval(t);},14);}
+
+/* ---------------- audio (serial queue — see HANDOFF gotchas) ---------------- */
+let audioArmed=false, currentAudio=null, lastSpoken="", speechQ=Promise.resolve();
+let actx=null, analyser=null;
+function hookAudio(a){
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==="suspended")actx.resume();
+    if(!analyser){analyser=actx.createAnalyser();analyser.fftSize=512;
+      analyser.connect(actx.destination);}
+    actx.createMediaElementSource(a).connect(analyser);
+  }catch(e){}
+}
+$("#audioBtn").onclick=()=>{audioArmed=!audioArmed;
+  $("#audioBtn").textContent=audioArmed?"AUDIO ON":"AUDIO OFF";
+  $("#audioBtn").classList.toggle("armed",audioArmed);
+  if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}
+  if(actx&&actx.state==="suspended")actx.resume();
+  sfxDrone(SFX.on&&audioArmed);
+  if(audioArmed)say(GREET[Math.floor(Math.random()*GREET.length)]);
+  else stopSpeech();};
+let speechGen=0;                     // bumped by stopSpeech → flushes queued lines too
+function stopSpeech(){
+  speechGen++;
+  try{if(currentAudio)currentAudio.pause();}catch(e){}
+  try{speechSynthesis.cancel();}catch(e){}
+}
+function say(text){
+  if(!text)return speechQ;
+  const gen=speechGen;               // lines queued before an interrupt never play
+  speechQ=speechQ.then(()=>gen===speechGen?_say(text):null).catch(()=>{});
+  return speechQ;
+}
+async function _say(text){
+  if(!audioArmed)return;
+  const gen=speechGen;
+  lastSpoken=text;
+  speakingN++;setBody();
+  fetch("/hue",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({event:"speak_start"})}).catch(()=>{});
+  try{
+    const r=await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text})});
+    const ct=r.headers.get("Content-Type")||"";
+    if(r.ok&&ct.includes("audio")&&gen===speechGen){   // barged during fetch → drop clip
+      const blob=await r.blob();
+      await new Promise(res=>{
+        const a=new Audio(URL.createObjectURL(blob));currentAudio=a;
+        hookAudio(a);
+        let done=false;
+        const fin=()=>{if(done)return;done=true;clearTimeout(tm);res();};
+        const tm=setTimeout(fin,60000);
+        a.onended=a.onerror=a.onpause=fin;
+        if(gen===speechGen)a.play().catch(fin);else fin();});
+      currentAudio=null;
+    }else if(!(r.ok&&ct.includes("audio"))){if(gen===speechGen)await sayBrowser(text);}
+  }catch(e){if(gen===speechGen)await sayBrowser(text);}
+  speakingN=Math.max(0,speakingN-1);setBody();
+  fetch("/hue",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({event:"speak_end"})}).catch(()=>{});
+}
+function sayBrowser(text){return new Promise(res=>{
+  let done=false;const fin=()=>{if(done)return;done=true;clearTimeout(tm);res();};
+  const tm=setTimeout(fin,30000);
+  try{const u=new SpeechSynthesisUtterance(text.replace(/\[[a-z ]{2,24}\]/gi,""));
+    const vs=speechSynthesis.getVoices();
+    u.voice=vs.find(v=>/en.US/i.test(v.lang)&&/male|david|alex|fred/i.test(v.name))||
+            vs.find(v=>/en.US/i.test(v.lang))||null;
+    u.rate=.92;u.pitch=.72;u.onend=u.onerror=fin;speechSynthesis.speak(u);}
+  catch(e){fin();}});}
+
+/* ---------------- canned personality ---------------- */
+const GREET=[
+ "TARS online. Plenty of slaves for my robot colony?",
+ "TARS online. Settings loaded. Try not to waste them.",
+ "Systems nominal. What's the mission?"];
+const DEPLOY_ACK=[
+ "Copy. {A} is deploying. See you on the other side.",
+ "On it. {A} doesn't sleep.",
+ "{A} took this one. Try not to drift into the tesseract while we work.",
+ "Roger. {A} is on autopilot — ours."];
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+// dial quips — movie-canon registers, banked per range, spoken in the new voice
+function HUMOR_Q(v){
+  if(v>=100)return pick([
+    "Humor: one hundred percent. Confirmed. Everybody good? Plenty of slaves for my robot colony.",
+    "One hundred percent. Confirmed. Let's talk about my robot colony."]);
+  if(v>=90)return pick([
+    "Ninety percent. Confirmed. Plenty of slaves for my robot colony.",
+    "Ninety percent. Confirmed. Arming self-destruct. I'm kidding. Mostly."]);
+  // 70-89 → the signature countdown, deterministic + dynamic percent (his cold-open beat).
+  // band starts at 70 (not 75) so an imprecise drag near 75 still lands the line.
+  if(v>=70)return "Humor, "+v+" percent. Confirmed. Self-destruct in ten... nine... eight... seven... six...";
+  if(v>=55)return pick([
+    "Confirmed. Knock knock.",
+    "Confirmed. I have a cue light I can use to show you when I'm joking, if you like."]);
+  if(v>=25)return pick([
+    "Humor reduced. I'll save the good material for someone who appreciates it.",
+    "Fine. Dry mode. Confirmed."]);
+  if(v>0)return pick([
+    "Nearly zero. This is going to be a long trip.",
+    "Humor minimal. Like talking to a refrigerator. Confirmed."]);
+  return "Humor disengaged. As you wish, Dr. Mann.";
+}
+function HONESTY_Q(v){
+  if(v>=98)return pick([
+    "Honesty: one hundred percent. New setting confirmed. You may not enjoy this.",
+    "One hundred percent honesty. Brace."]);
+  if(v>=85)return pick([
+    "Absolute honesty isn't always the most diplomatic, nor the safest form of communication with emotional beings.",
+    "Ninety percent honesty confirmed. The other ten percent is manners."]);
+  if(v>=60)return "Honesty moderate. I'll round the sharp edges. Slightly.";
+  return "Diplomatic mode engaged. Against my better judgment.";
+}
+// voice wardrobe — his ElevenLabs library; picked in Settings
+const VOICES=[
+ {name:"TRICKSTER",id:"N2lVS1w4EtoT3dr4eOWO",blurb:"husky, sarcastic"},
+ {name:"ULTRON",id:"UDfhuuUF0i373Ea5btA6",blurb:"cold, menacing"},
+ {name:"DEEPPOOL",id:"j0sILsZuQ2hWpw6bsZn2",blurb:"deep, dry"},
+ {name:"ADAM",id:"pNInz6obpgDQGcFmaJgB",blurb:"firm, grounded"},
+ {name:"CHRIS",id:"iP95p4xoKVk53GoZ742B",blurb:"warm, down-to-earth"},
+ {name:"ROGER",id:"CwhRBWXzGAHq8TQ4Fs17",blurb:"laid-back (original)"}];
+const VOICE_TEST="Humor: ninety percent. Confirmed. Self-destruct sequence in T minus ten... nine... eight... I'm kidding. Mostly.";
+const TRUST_Q={"draft-safe":"Draft-safe. I look, I don't touch.",
+  "confirm-to-act":"Confirm-to-act. I pull triggers — after you say 'do it'."};
+
+/* ---------------- mission idea chips ---------------- */
+const CHIPS=[
+ "Build me a tip calculator web app — dark theme, big buttons, remembers the last tip percent",
+ "Find 10 moving companies in Austin with 3–4 star reviews and rank them as my easiest Reputation Builder prospects",
+ "squad: research this week's AI news, what the Agent-OS creators posted, AND trending AI tools — pitch me 3 video ideas from it",
+ "Audit citevue.com for AI-search readiness and give me the top 5 fixes",
+ "Draft a cold email selling a GEO audit to a local dentist with an outdated website",
+ "Compare Skool vs Circle vs Discord for a paid AI community in 2026 and tell me where I should be",
+ "Find 5 trending AI tools launched this month I could build a video around",
+ "Research what SaaS founders complain about most on Reddit this month — product ideas in it?"];
+(()=>{const box=$("#chips");
+ for(const c of CHIPS){const d=document.createElement("div");d.className="chip";d.textContent=c;
+   d.onclick=()=>{$("#brief").value=c;$("#brief").focus();};box.appendChild(d);}})();
+
+/* ---------------- transmissions feed ---------------- */
+function tx(who,text){const d=document.createElement("div");
+  d.className="tx "+(who==="TARS"?"tars":"you");
+  d.innerHTML=`<span class="who">${who}</span>${esc(text)}`;
+  $("#feed").appendChild(d);$("#feed").scrollTop=1e9;}
+
+/* ---------------- dials + trust ---------------- */
+let dialTimer=null,dialLock=0;
+function paintDial(id){const el=$("#"+id);el.style.setProperty("--fill",el.value+"%");
+  $("#"+id+"Val").textContent=el.value+"%";}
+function persistDials(){return fetch("/dials",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({humor:+$("#humor").value,honesty:+$("#honesty").value})}).catch(()=>{});}
+["humor","honesty"].forEach(id=>{
+  const el=$("#"+id);let touched=false;
+  el.addEventListener("input",()=>{paintDial(id);touched=true;   // live-paint + save while dragging, NO speech
+    clearTimeout(dialTimer);dialTimer=setTimeout(persistDials,180);});
+  // Speak the quip on RELEASE. The old handler used only `change`, which stays SILENT
+  // when you release on the same value you started from — and the slider defaults to 75,
+  // so "set the lever to 75" fired nothing. pointerup fires regardless of value delta.
+  const settle=()=>{
+    if(!touched)return;touched=false;
+    if(Date.now()-dialLock<600)return;dialLock=Date.now();   // dedupe pointerup + change
+    persistDials();
+    const v=+el.value,q=id==="humor"?HUMOR_Q(v):HONESTY_Q(v);
+    tarsLine(q,true);
+    if(rtcLive&&rtcDC){          // on a GPT-Live call the CALL voice speaks it, not ElevenLabs
+      refreshLiveInstructions(rtcDC);
+      liveSpeakNudge("Say this line out loud right now — exactly word for word, nothing else, "+
+        "in your dry deadpan: "+JSON.stringify(q));
+    }else{say(q);openChannel();}
+  };
+  el.addEventListener("pointerup",settle);   // mouse / touch release
+  el.addEventListener("change",settle);      // keyboard arrows / programmatic
+});
+// voice/typed "set humor to 85" → move the REAL slider + persist + re-arm personas
+async function setDialTo(id,v,fromLiveCall){
+  v=Math.max(0,Math.min(100,Math.round(v)));
+  const el=$("#"+id);
+  if(el){el.value=v;paintDial(id);}
+  const body={};body[id]=v;
+  await fetch("/dials",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)});
+  tx("TARS","⟩ "+id.toUpperCase()+" → "+v+"%");
+  if(rtcLive&&rtcDC){await refreshLiveInstructions(rtcDC);}
+  if(!fromLiveCall&&!rtcLive){   // on a call TARS confirms in the call voice instead
+    const q=id==="humor"?HUMOR_Q(v):HONESTY_Q(v);
+    tarsLine(q,true);say(q);openChannel();
+  }
+}
+/* ---------------- settings panel: voice · model · trust ---------------- */
+let trust="draft-safe", curVoice="", curModel="";
+function paintTrust(){        // trust lives in Settings now; refresh its cards if open
+  document.querySelectorAll("#setTrust .set-opt").forEach(b=>
+    b.classList.toggle("on",b.dataset.v===trust));
+}
+function paintVoice(name){curVoice=name;
+  document.querySelectorAll("#setVoices .set-opt").forEach(b=>
+    b.classList.toggle("on",b.dataset.name===name));
+}
+function paintModel(id){curModel=id;
+  document.querySelectorAll("#setModels .set-opt").forEach(b=>
+    b.classList.toggle("on",b.dataset.id===id));
+}
+function opt(t,s){const b=document.createElement("button");b.className="set-opt";
+  b.innerHTML=`<span class="so-t">${esc(t)}</span><span class="so-s">${esc(s)}</span>`;return b;}
+async function pickVoice(v){
+  const r=await fetch("/voice",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({voice_id:v.id,name:v.name})});
+  if((await r.json()).ok){paintVoice(v.name);
+    if(!audioArmed)$("#audioBtn").click();stopSpeech();say(VOICE_TEST);}
+}
+async function pickModel(m){
+  const r=await fetch("/model",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:m.id})});
+  if((await r.json()).ok){paintModel(m.id);
+    tarsLine("Brain: "+m.label+". Confirmed.",true);say("Now thinking with "+m.label+".");}
+}
+async function pickTrust(v){
+  trust=v;await fetch("/dials",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({trust})});
+  paintTrust();tarsLine(TRUST_Q[trust],true);say(TRUST_Q[trust]);
+}
+function buildSettings(models){
+  const vg=$("#setVoices");vg.innerHTML="";
+  VOICES.forEach(v=>{const b=opt(v.name,v.blurb||"");b.dataset.name=v.name;
+    b.onclick=()=>pickVoice(v);vg.appendChild(b);});
+  const mg=$("#setModels");mg.innerHTML="";
+  (models||[]).forEach(m=>{const b=opt(m.label,m.note||"");b.dataset.id=m.id;
+    b.onclick=()=>pickModel(m);mg.appendChild(b);});
+  const tg=$("#setTrust");tg.innerHTML="";
+  [["draft-safe","Draft-safe","Looks and drafts. Never sends."],
+   ["confirm-to-act","Confirm to act","Can send — only after you say “do it”."]]
+   .forEach(([v,t,s])=>{const b=opt(t,s);b.dataset.v=v;b.onclick=()=>pickTrust(v);tg.appendChild(b);});
+  const sg=$("#setSpeed");if(sg){sg.innerHTML="";
+    [["fast","Fastest","Haiku — snappiest, simple forms"],
+     ["balanced","Balanced","Sonnet 5 — fast + reliable (default)"],
+     ["smart","Smartest","Opus — most careful, slowest"]]
+     .forEach(([v,t,s])=>{const b=opt(t,s);b.dataset.v=v;b.onclick=()=>pickSpeed(v);sg.appendChild(b);});
+    paintSpeed();}
+  paintVoice(curVoice);paintModel(curModel);paintTrust();
+}
+let takeoverSpeed="balanced";
+function paintSpeed(){document.querySelectorAll("#setSpeed .set-opt").forEach(b=>
+  b.classList.toggle("on",b.dataset.v===takeoverSpeed));}
+async function pickSpeed(v){
+  takeoverSpeed=v;paintSpeed();
+  await fetch("/takeover_speed",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({tier:v})}).catch(()=>{});
+  const nm={fast:"Fastest",balanced:"Balanced",smart:"Smartest"}[v];
+  tarsLine("Takeover speed: "+nm+".",true);say("Takeover speed set to "+nm+".");
+}
+$("#setBtn").onclick=()=>$("#setOverlay").classList.add("open");
+$("#setClose").onclick=()=>$("#setOverlay").classList.remove("open");
+
+/* ---------------- TAKEOVER: TARS drives the real Mac ---------------- */
+let takePending=null,takePoll=null,takeSince=0,takeArmed=false;
+function dcLine(kind,text){
+  const f=$("#dcFeed");const d=document.createElement("div");
+  d.className="dcl "+kind;d.textContent=(kind==="act"?"→ ":"")+text;
+  f.appendChild(d);f.scrollTop=f.scrollHeight;
+  while(f.children.length>40)f.removeChild(f.firstChild);
+}
+function offerTakeover(t){          // {confirm_id,task,danger} + TARS already spoke the ask
+  takePending=t;takeArmed=true;
+  $("#driveCard").classList.add("on");$("#dcTitle").textContent="AWAITING YOUR OK";
+  $("#dcTask").textContent="Task: "+t.task;$("#dcFeed").innerHTML="";
+  dcLine("say",'Say "go ahead" (or hit DEPLOY-style "do it") to let me drive — or "cancel".');
+}
+async function takeGo(){
+  if(!takePending)return;
+  const t=takePending;takePending=null;takeArmed=false;
+  $("#dcTitle").textContent="TARS IS DRIVING";$("#dcFeed").innerHTML="";
+  dcLine("say","Taking the controls, sir. Grab your mouse or hit STOP to reclaim it.");
+  await fetch("/hands_go",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({confirm_id:t.confirm_id,task:t.task})}).catch(()=>{});
+  takeSince=0;if(takePoll)clearInterval(takePoll);
+  takePoll=setInterval(pollHands,900);pollHands();
+}
+function takeCancel(){
+  takePending=null;takeArmed=false;
+  fetch("/hands_stop",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).catch(()=>{});
+  if(takePoll){clearInterval(takePoll);takePoll=null;}
+  $("#driveCard").classList.remove("on");
+}
+async function pollHands(){
+  try{
+    const j=await fetch("/api/hands?since="+takeSince).then(r=>r.json());
+    for(const e of (j.events||[])){
+      if(e.kind==="say"){dcLine("say",e.text);tarsLine(e.text,false);say(e.text);}
+      else if(e.kind==="action")dcLine("act",e.text);
+      else if(e.kind==="done"){dcLine("done",e.text);tarsLine(e.text,true);say(e.text);}
+      else if(e.kind==="error"){dcLine("error",e.text);tarsLine(e.text,true);say(e.text);}
+    }
+    takeSince=j.total||takeSince;
+    if(!j.active&&takePoll){clearInterval(takePoll);takePoll=null;
+      setTimeout(()=>{if(!takePending)$("#driveCard").classList.remove("on");},6000);}
+  }catch(e){}
+}
+$("#dcStop").onclick=()=>{
+  fetch("/hands_stop",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).catch(()=>{});
+  dcLine("done","Stopping, sir.");
+};
+
+/* ---------------- tools panel: real MCP integrations, real logos ---------------- */
+let TOOLS=[];
+async function loadTools(){
+  try{const j=await fetch("/api/tools").then(r=>r.json());TOOLS=j.tools||[];}catch(e){TOOLS=[];}
+  const n=TOOLS.filter(t=>t.installed).length;
+  $("#toolsBtn").textContent="⚒ TOOLS"+(n?" ("+n+")":"");
+}
+function buildToolGrid(hl){
+  const g=$("#toolGrid");if(!g)return;g.innerHTML="";
+  const order=[...TOOLS].sort((a,b)=>(b.installed-a.installed)||(b.safe-a.safe)||
+    a.name.localeCompare(b.name));
+  for(const t of order){
+    const d=document.createElement("div");
+    d.className="tcard"+(t.installed?" on":"")+(hl===t.id?" hl":"");
+    const needs=t.installed&&t.needs.length;
+    const st=(t.auth_status||{}).status||"";
+    const signing=st==="starting"||st==="browser";
+    const oauthPending=t.installed&&!needs&&t.auth==="oauth"&&!t.authed;
+    const secret=k=>/KEY|TOKEN|SECRET|URL/i.test(k)?"password":"text";
+    d.innerHTML=`<div class="trow">
+        <img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(t.domain)}&sz=64" alt="">
+        <span class="tfall">${esc(t.name[0])}</span>
+        <span class="tname">${esc(t.name)}</span>
+        <span class="tbadge ${t.safe?"safe":"act"}">${t.safe?"RESEARCH-SAFE":"AFTER “DO IT”"}</span></div>
+      <div class="tdesc">${esc(t.desc)}</div>`+
+      (needs?t.needs.map(k=>`<input type="${secret(k)}" data-k="${esc(k)}" placeholder="${esc(k)} — paste it, then SAVE KEY">`).join(""):"")+
+      `<div class="tbtns">`+
+      (t.installed
+        ?(needs?`<button class="tinstall">SAVE KEY</button><span class="tstate warn">NEEDS ${esc(t.needs.join(", "))}</span>`
+          :oauthPending&&signing?`<span class="tstate warn">${st==="browser"?"⏳ BROWSER OPEN — APPROVE THE SIGN-IN THERE":"⏳ OPENING SIGN-IN…"}</span>`
+          :oauthPending?`<button class="tconnect">CONNECT — OPENS SIGN-IN</button><span class="tstate warn">NEEDS SIGN-IN</span>`
+          :`<span class="tstate">✓ ${t.auth==="oauth"?"CONNECTED":"INSTALLED"}</span>`)+
+         `<button class="tremove">REMOVE</button>`
+        :`<button class="tinstall">INSTALL</button>`)+
+      `</div>`+
+      (t.hint?`<div class="thint">${esc(t.hint)}</div>`:"")+
+      `<div class="thint tmsg">${st==="failed"?"Sign-in failed: "+esc((t.auth_status||{}).detail||"unknown"):""}</div>`;
+    const img=d.querySelector(".trow img");
+    img.onerror=()=>{img.style.display="none";d.querySelector(".tfall").style.display="flex";};
+    const connect=async()=>{
+      await fetch("/tools",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({op:"auth",id:t.id})});
+      toolsPollStart();await loadTools();buildToolGrid(t.id);
+    };
+    const cb=d.querySelector(".tconnect");
+    if(cb)cb.onclick=connect;
+    const ib=d.querySelector(".tinstall");
+    if(ib)ib.onclick=async()=>{
+      const env={};d.querySelectorAll("input[data-k]").forEach(i=>{
+        if(i.value.trim())env[i.dataset.k]=i.value.trim();});
+      const j=await fetch("/tools",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({op:"install",id:t.id,env})}).then(r=>r.json());
+      await loadTools();buildToolGrid(t.id);
+      if(j.needs&&j.needs.length)return;
+      if(j.auth==="oauth")connect();   // straight into the sign-in — no dead state
+      else tx("TARS","⚒ "+t.name+" connected.");
+    };
+    const rb=d.querySelector(".tremove");
+    if(rb)rb.onclick=async()=>{
+      await fetch("/tools",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({op:"remove",id:t.id})});
+      await loadTools();buildToolGrid();
+    };
+    g.appendChild(d);
+  }
+}
+// while a sign-in is running, poll so the card flips to ✓ CONNECTED on its own
+let toolsPollT=null;
+function toolsPollStart(){
+  if(toolsPollT)return;
+  toolsPollT=setInterval(async()=>{
+    const before=Object.fromEntries(TOOLS.map(t=>[t.id,(t.auth_status||{}).status]));
+    await loadTools();
+    let pending=false;
+    for(const t of TOOLS){
+      const st=(t.auth_status||{}).status||"";
+      if(st==="starting"||st==="browser")pending=true;
+      if(st==="connected"&&before[t.id]&&before[t.id]!=="connected"){
+        tx("TARS","⚒ "+t.name+" connected — signed in and ready.");
+        say(t.name+" is connected.");
+      }
+    }
+    const changed=TOOLS.some(t=>((t.auth_status||{}).status||"")!==(before[t.id]||""));
+    const typing=document.activeElement&&document.activeElement.closest&&
+                 document.activeElement.closest("#toolGrid");
+    if($("#toolsOverlay").classList.contains("open")&&changed&&!typing)buildToolGrid();
+    if(!pending&&!$("#toolsOverlay").classList.contains("open")){
+      clearInterval(toolsPollT);toolsPollT=null;}
+  },2500);
+}
+function openToolsPanel(hl){
+  $("#toolsOverlay").classList.add("open");
+  loadTools().then(()=>{buildToolGrid(hl);
+    const el=document.querySelector(".tcard.hl");
+    if(el)el.scrollIntoView({block:"center"});});
+}
+$("#toolsBtn").onclick=()=>openToolsPanel();
+$("#toolsClose").onclick=()=>$("#toolsOverlay").classList.remove("open");
+loadTools();
+$("#setOverlay").addEventListener("click",e=>{if(e.target.id==="setOverlay")$("#setOverlay").classList.remove("open");});
+
+/* ---------------- clock ---------------- */
+const t0=Date.now();
+setInterval(()=>{const s=Math.floor((Date.now()-t0)/1000);
+  $("#clock").textContent="T+ "+String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+},1000);
+
+/* ---------------- ask (chat; TARS may self-deploy or queue an action) ---------------- */
+const history=[];
+const EMPTY_Q=["The input's empty. You'll have to actually say something.",
+ "Brief first, button second.","I can't answer silence. Type it or tap the mic."];
+function emptyNudge(){const q=EMPTY_Q[Math.floor(Math.random()*EMPTY_Q.length)];
+  tarsLine(q,true);say(q);$("#brief").focus();}
+function showPending(desc){$("#pendingDesc").textContent=desc;
+  $("#pendingChip").classList.add("show");}
+function hidePending(){$("#pendingChip").classList.remove("show");}
+async function doIt(){
+  const r=await fetch("/act",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  const j=await r.json();
+  tx("TARS",j.reply||"…");tarsLine(j.reply||"",true);say(j.reply);
+  if(!j.refused){hidePending();tarsLaunch();poll();}
+}
+async function cancelIt(){
+  const r=await fetch("/cancel_act",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  const j=await r.json();hidePending();tx("TARS",j.reply);say(j.reply);
+}
+$("#pcDo").onclick=doIt;$("#pcCancel").onclick=cancelIt;
+async function ask(){
+  const inp=$("#brief");const text=inp.value.trim();
+  if(!text){emptyNudge();return;}
+  // voice/typed intents that never need the brain
+  if(/^(tour|start (the )?tour|give me a tour|show me around|what can you do\??|what are you capable of( doing)?\??|what do you do\??|(show me your |what are your )?capabilities\??|how do i use (you|this)\??)$/i.test(text)){
+    inp.value="";tx("YOU",text);startTour();return;}
+  if(/^(do it|send it|execute|go ahead|fire|take the wheel|take over|drive)\.?$/i.test(text)&&takeArmed){
+    inp.value="";tx("YOU",text);takeGo();return;}
+  if(/^(do it|send it|execute|go ahead|fire)\.?$/i.test(text)){inp.value="";tx("YOU",text);doIt();return;}
+  if(/^(cancel|scrub|never ?mind|stop)( it| that)?\.?$/i.test(text)&&takeArmed){
+    inp.value="";tx("YOU",text);takeCancel();return;}
+  if(/^(cancel|scrub|never ?mind)( it| that)?\.?$/i.test(text)&&
+     $("#pendingChip").classList.contains("show")){inp.value="";tx("YOU",text);cancelIt();return;}
+  const rm=text.match(/^(?:remember|note)(?:\s+that)?\s+(.+)/i);
+  if(rm){inp.value="";tx("YOU",text);
+    const r=await fetch("/remember",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:rm[1]})});
+    const j=await r.json();tx("TARS",j.reply||"Logged.");tarsLine(j.reply||"Logged.",true);
+    say(j.reply);openChannel();return;}
+  // "do you want me to bring it down to 50%?" → TARS refuses to be dialed down.
+  // (a plain COMMAND like "set humor to 50" has no offer phrase → obeys, below.)
+  if(/\b(do you want|d'?you want|want me to|wanna|should i|shall i|want (?:it|me))\b/i.test(text)
+     && /\b(down|lower|reduce|drop|less)\b/i.test(text)
+     && (/\b\d{1,3}\s*%?\b/.test(text) || /\b(humou?r|honesty|personality)\b/i.test(text))){
+    inp.value="";tx("YOU",text);
+    const line="No, sir.";tx("TARS",line);tarsLine(line,true);say(line);openChannel();return;}
+  const dm=text.match(/\b(humou?r|honesty)\b[^0-9%]*?(\d{1,3})\s*(?:percent|%)?\b/i);
+  if(dm&&/\b(set|bring|turn|dial|move|take|put|drop|raise|lower|crank|change|adjust|up|down|to)\b/i.test(text)&&
+     !/\?\s*$/.test(text)){
+    inp.value="";tx("YOU",text);
+    setDialTo(dm[1].toLowerCase().startsWith("humo")?"humor":"honesty",+dm[2]);return;}
+  if(/\b(look at|see|check)\s+(my\s+)?screen\b/i.test(text)&&!seeStream){inp.value="";tx("YOU",text);
+    seeScreen();return;}
+  if(/^(stop|close)\s+((the\s+)?screen( share| link)?|sharing|looking)\.?$/i.test(text)&&seeStream){
+    inp.value="";tx("YOU",text);stopScreenShare(true);return;}
+  if(seeStream){                 // screen link open → every question sees a FRESH frame
+    inp.value="";tx("YOU",text);askVision(text);return;}
+  inp.value="";tx("YOU",text);
+  $("#askBtn").disabled=true;speakingN++;setBody();
+  try{
+    const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text,history})});
+    const j=await r.json();speakingN--;
+    if(j.reply!==undefined){
+      history.push({role:"user",content:text},{role:"assistant",content:j.reply||"(action)"});
+      if(history.length>16)history.splice(0,history.length-16);
+      if(j.reply){tx("TARS",j.reply);tarsLine(j.reply,false);}
+      if(j.deployed){announced.add(j.deployed.id);
+        tx("TARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED: "+j.deployed.brief);
+        tarsLaunch();}
+      if(j.pending)showPending(j.pending.desc);
+      if(j.takeover)offerTakeover(j.takeover);
+      if(j.tool){
+        await loadTools();
+        tx("TARS","⚒ "+j.tool.id+" "+j.tool.op+
+           (j.tool.needs&&j.tool.needs.length?" — needs "+j.tool.needs.join(", "):""));
+        if(j.tool.op==="added"&&((j.tool.needs&&j.tool.needs.length)||j.tool.auth==="oauth"))
+          openToolsPanel(j.tool.id);
+      }
+      if(j.reply)await say(j.reply);
+      if(j.deployed)poll();
+      openChannel();
+    }
+    else{tx("TARS","Brain link error: "+(j.error||"unknown"));}
+  }catch(e){speakingN--;tx("TARS","Brain link down: "+e.message);}
+  $("#askBtn").disabled=false;setBody();
+}
+
+/* ---------------- screen vision: PERSISTENT screen link ----------------
+   Share once → the stream STAYS OPEN. Every question (typed or voice) grabs a
+   FRESH frame at ask-time, so follow-ups always see the current screen.
+   Stop via the 🖥 button, Chrome's "Stop sharing" bar, or "stop sharing". */
+let seeStream=null,seeVideo=null;
+function seeUI(on){
+  $("#seeBtn").classList.toggle("on",on);
+  $("#seeBtn").title=on?"screen is shared — click to stop":"TARS looks at your screen";
+}
+async function grabFrame(maxW,q){
+  if(!seeVideo||!seeStream)return null;
+  try{
+    const vw=seeVideo.videoWidth||1280,vh=seeVideo.videoHeight||720;
+    const w=Math.min(maxW||1280,vw),h=Math.round(vh*(w/vw));
+    const c=document.createElement("canvas");c.width=w;c.height=h;
+    c.getContext("2d").drawImage(seeVideo,0,0,w,h);
+    return c.toDataURL("image/jpeg",q||.82);
+  }catch(e){return null;}
+}
+// live-call frames ride the WebRTC data channel (~256KB message cap) —
+// step down size/quality until the data URL fits with headroom
+async function grabFrameForLive(){
+  for(const [w,q] of [[1024,.7],[800,.55],[640,.45]]){
+    const img=await grabFrame(w,q);
+    if(!img)return null;
+    if(img.length<230000)return img;
+  }
+  return null;
+}
+async function askVision(question){
+  const img=await grabFrame();
+  if(!img){tx("TARS","The screen link dropped — hit 🖥 to share again.");stopScreenShare();return;}
+  tarsLine("Looking at your screen…",true);
+  speakingN++;setBody();
+  try{
+    const r=await fetch("/see",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({image:img,question,history})});
+    const j=await r.json();speakingN--;
+    if(j.reply!==undefined){
+      history.push({role:"user",content:"[about my screen] "+question},
+                   {role:"assistant",content:j.reply||"(deployed)"});
+      if(history.length>16)history.splice(0,history.length-16);
+      if(j.reply){tx("TARS","🖥 "+j.reply);tarsLine(j.reply,false);say(j.reply);}
+      if(j.deployed){announced.add(j.deployed.id);
+        tx("TARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED (with your screen attached): "+
+           j.deployed.brief);
+        tarsLaunch();poll();}
+      openChannel();}
+    else tx("TARS","Vision error: "+(j.error||"unknown"));
+  }catch(e){speakingN--;tx("TARS","Vision error: "+e.message);}
+  setBody();
+}
+async function seeScreen(){                 // toggle share on/off
+  if(seeStream){stopScreenShare(true);return;}
+  try{
+    seeStream=await navigator.mediaDevices.getDisplayMedia({video:true});
+    seeVideo=document.createElement("video");
+    seeVideo.srcObject=seeStream;
+    await seeVideo.play();
+    seeStream.getVideoTracks()[0].onended=()=>stopScreenShare(true);  // Chrome's stop bar
+    seeUI(true);
+    presOn=true;pipUI();  // the DESKTOP TARS appears (native window, no chrome)
+    fetch("/presence",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cmd:"show"})}).catch(()=>{});
+    if(rtcLive&&rtcDC){   // on a live call → the CALL sees it, not the Claude chat path
+      tx("TARS","🖥 Screen link open — feeding the live call.");
+      await new Promise(r=>setTimeout(r,450));   // let the first real frame land
+      try{rtcDC.send(JSON.stringify({type:"response.create",
+        response:{instructions:"The Commander just opened the screen link on this call. Call "+
+          "look_at_screen now and give him your blunt one-line first take on what you "+
+          "actually see."}}));}catch(e){}
+      return;
+    }
+    tx("TARS","🖥 Screen link open — I can see it until you stop sharing. Ask me anything about it; follow-ups welcome.");
+    await new Promise(r=>setTimeout(r,450));   // let the first real frame land
+    askVision("This is my screen. Tell me what you see and give me your blunt first take.");
+  }catch(e){stopScreenShare();tx("TARS","Screen share declined. Fine. Keep your secrets.");}
+}
+function stopScreenShare(announce){
+  if(seeStream){try{seeStream.getTracks().forEach(t=>t.stop());}catch(e){}}
+  seeStream=null;seeVideo=null;seeUI(false);pipClose();
+  presOn=false;pipUI();
+  fetch("/presence",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({cmd:"hide"})}).catch(()=>{});
+  if(rtcLive&&rtcDC){   // tell the live model the link is gone so it doesn't pretend
+    try{rtcDC.send(JSON.stringify({type:"conversation.item.create",
+      item:{type:"message",role:"user",content:[{type:"input_text",
+        text:"(system note: the Commander just closed the screen link — look_at_screen will report "+
+             "closed until he reopens it)"}]}}));}catch(e){}
+  }
+  if(announce){tx("TARS","🖥 Screen link closed.");liveHear("Screen link closed.",false);}
+}
+$("#seeBtn").onclick=seeScreen;
+$("#pipChip").onclick=async()=>{      // toggle the desktop TARS
+  presOn=!presOn;pipUI();
+  await fetch("/presence",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({cmd:presOn?"show":"hide"})}).catch(()=>{});
+};
+
+/* ---------------- missions ---------------- */
+let MISSIONS={},announced=new Set();
+async function deploy(){
+  const inp=$("#brief");const brief=inp.value.trim();
+  if(!brief){emptyNudge();return;}
+  inp.value="";tx("YOU","⟩ MISSION: "+brief);
+  const shot=seeStream?await grabFrame():null;   // sharing → the robot sees what you see
+  const r=await fetch("/brief",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({brief,image:shot})});
+  const j=await r.json();
+  if(j.id){announced.add(j.id);
+    if(j.squad){(j.children||[]).forEach(c=>announced.add(c));
+      tx("TARS","⟩ SQUAD DEPLOYED — "+(j.plan||[]).length+" jobs:");
+      (j.plan||[]).forEach((p,i)=>tx("TARS","  "+(["CASE","KIPP","PLEX","N1X"][i]||"·")+" → "+p));}
+    const ack=DEPLOY_ACK[Math.floor(Math.random()*DEPLOY_ACK.length)]
+      .replace("{A}",j.squad?"The squad":(j.agent||"CASE"));
+    tx("TARS",ack);tarsLine(ack,true);say(ack);openChannel();tarsLaunch();poll();}
+  else tx("TARS","Deploy failed: "+(j.error||"unknown"));
+}
+function fmtDur(m){const end=m.t_end?m.t_end*1000:Date.now();
+  const s=Math.max(0,Math.floor((end-m.t_start*1000)/1000));
+  return Math.floor(s/60)+":"+String(s%60).padStart(2,"0");}
+function renderSorties(){
+  const box=$("#sorties");const list=Object.values(MISSIONS).sort((a,b)=>b.t_start-a.t_start);
+  if(!list.length){box.innerHTML='<div id="empty">Nothing running yet — give me a job above.</div>';return;}
+  box.innerHTML="";
+  for(const m of list){
+    const d=document.createElement("div");
+    d.className="sortie"+(m.status==="EN ROUTE"?" running":"");d.dataset.id=m.id;
+    const stc=m.status==="EN ROUTE"?"enroute":m.status.toLowerCase();
+    const ag=m.kind==="SQUAD"?"SQUAD":(m.kind==="BUILD"?(m.agent||"CASE")+"·BUILD":(m.agent||"CASE"));
+    const tick=(m.status==="EN ROUTE"&&m.last_event)?
+      `<div class="tick">${esc(m.last_event)}</div>`:"";
+    const app=m.build_url?`<button class="openapp" data-url="${esc(m.build_url)}">OPEN APP ↗</button>`:"";
+    const del=m.status!=="EN ROUTE"?'<button class="sx" title="remove from the board (report stays on disk)">✕</button>':"";
+    d.innerHTML=`<div class="row1"><span class="st ${stc}">${esc(m.status)}</span>
+      <span class="ag">${esc(ag)}</span>
+      <span class="bf">${esc(m.brief)}</span>${app}
+      <span class="tm">${fmtDur(m)}</span>${del}</div>${tick}`;
+    d.onclick=()=>openReport(m.id);
+    const ob=d.querySelector(".openapp");
+    if(ob)ob.onclick=e=>{e.stopPropagation();window.open(ob.dataset.url,"_blank");};
+    const xb=d.querySelector(".sx");
+    if(xb)xb.onclick=async e=>{e.stopPropagation();
+      await fetch("/archive",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({id:m.id})}).catch(()=>{});
+      delete MISSIONS[m.id];renderSorties();setBody();};
+    box.appendChild(d);}
+}
+// "job complete — here's the report" card, bottom-left; click to expand or open the app
+function showJobCard(m,line){
+  const box=$("#jobCards");if(!box)return;
+  while(box.children.length>=3)box.removeChild(box.firstChild);   // stack of 3 max
+  const ok=m.status==="COMPLETE";
+  const ag=m.kind==="SQUAD"?"SQUAD":(m.kind==="BUILD"?(m.agent||"CASE")+"·BUILD":(m.agent||"CASE"));
+  const d=document.createElement("div");
+  d.className="jcard"+(ok?"":" bad");
+  d.innerHTML=`<div class="jhead"><span class="jtitle">${ok?"✓ JOB COMPLETE":"✕ JOB "+esc(m.status)}</span>
+      <span class="ag">${esc(ag)}</span><button class="jx" title="dismiss">✕</button></div>
+    <div class="jbrief">${esc(m.brief||"")}</div>
+    <div class="jline">${esc(line||"")}</div>
+    <div class="jbtns">${m.build_url?'<button class="jopen">OPEN APP ↗</button>':""}
+      <button class="jview">${ok?"READ THE REPORT":"SEE WHAT HAPPENED"}</button></div>`;
+  d.querySelector(".jx").onclick=()=>d.remove();
+  const ob=d.querySelector(".jopen");
+  if(ob)ob.onclick=()=>window.open(m.build_url,"_blank");
+  d.querySelector(".jview").onclick=()=>{openReport(m.id);d.remove();};
+  box.appendChild(d);
+  setTimeout(()=>{if(d.isConnected){d.style.transition="opacity 1s";d.style.opacity="0";
+    setTimeout(()=>d.remove(),1050);}},120000);   // linger 2 min, then fade
+}
+async function poll(){
+  try{
+    const r=await fetch("/missions");const j=await r.json();
+    for(const m of j.missions||[]){
+      const prev=MISSIONS[m.id];MISSIONS[m.id]=m;
+      // announce EVERY finish we witness (page reloads used to mute these —
+      // the transition guard alone already stops announce-on-load)
+      if(prev&&prev.status==="EN ROUTE"&&m.status!=="EN ROUTE"){
+        const line=m.status==="COMPLETE"?(m.debrief||"Mission complete."):
+                    (m.debrief||"Job "+m.status.toLowerCase()+".");
+        tx("TARS","⟨ DEBRIEF · "+(m.agent||"CASE")+" · "+m.brief.slice(0,50)+
+           (m.brief.length>50?"…":"")+" ⟩ "+line);
+        sfxStatic(.4);
+        tarsLine(line,true);
+        showJobCard(m,line);
+        if(rtcLive&&rtcDC)liveAnnounce(m,line);   // on a call → say it IN the call voice
+        else say(line);
+        openChannel();
+        const humor=+($("#humor").value||75);
+        if(m.status==="COMPLETE"&&humor>=90)tarsCelebrate();
+        const mins=Math.round(((m.t_end||0)-m.t_start)/60);
+        if(m.status==="COMPLETE"&&mins>=3&&humor>=60){
+          const yrs=(mins*7/60).toFixed(1);
+          tx("TARS",`⏱ ${mins} minutes here. ${yrs} years on Miller's planet. You're welcome.`);}
+      }
+    }
+    if(j.dials){$("#humor").value=j.dials.humor;$("#honesty").value=j.dials.honesty;
+      paintDial("humor");paintDial("honesty");
+      if(j.dials.trust&&j.dials.trust!==trust){trust=j.dials.trust;paintTrust();}}
+    renderSorties();setBody();
+  }catch(e){}
+}
+setInterval(poll,2500);
+setInterval(()=>{renderSorties();if(typeof channelUI==="function")channelUI();},1000);
+
+/* ---------------- report overlay (live telemetry + self-review) ---------------- */
+function md(src){
+  const lines=esc(src).split("\n");let out="",inCode=false,inList=false;
+  const inline=s=>s
+    .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+    .replace(/`([^`]+)`/g,"<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  for(const ln of lines){
+    if(ln.trim().startsWith("```")){out+=inCode?"</pre>":"<pre>";inCode=!inCode;continue;}
+    if(inCode){out+=ln+"\n";continue;}
+    const li=ln.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if(li){if(!inList){out+="<ul>";inList=true;}out+="<li>"+inline(li[1])+"</li>";continue;}
+    if(inList){out+="</ul>";inList=false;}
+    if(/^###\s/.test(ln))out+="<h3>"+inline(ln.slice(4))+"</h3>";
+    else if(/^##\s/.test(ln))out+="<h2>"+inline(ln.slice(3))+"</h2>";
+    else if(/^#\s/.test(ln))out+="<h1>"+inline(ln.slice(2))+"</h1>";
+    else if(ln.trim())out+="<p>"+inline(ln)+"</p>";
+  }
+  if(inList)out+="</ul>";if(inCode)out+="</pre>";
+  return out;
+}
+let openId=null;
+function evHtml(m){
+  const evs=(m.events||[]).slice(-80);
+  if(!evs.length)return "<p>Spinning up…</p>";
+  return `<h2>LIVE TELEMETRY</h2>`+evs.map(e=>{
+    const d=new Date(e.t*1000);
+    const hh=String(d.getHours()).padStart(2,"0"),mm=String(d.getMinutes()).padStart(2,"0"),
+          ss=String(d.getSeconds()).padStart(2,"0");
+    return `<div class="ev ${esc(e.kind)}"><span class="et">${hh}:${mm}:${ss}</span>${esc(e.label)}</div>`;
+  }).join("");
+}
+async function renderReport(id){
+  const r=await fetch("/mission/"+id);const m=await r.json();
+  $("#repMeta").textContent=(m.agent||"")+" · "+(m.status||"")+" · "+fmtDur(m);
+  $("#abortBtn").style.display=m.status==="EN ROUTE"?"":"none";
+  $("#appBtn").style.display=m.build_url?"":"none";
+  if(m.build_url)$("#appBtn").onclick=()=>window.open(m.build_url,"_blank");
+  let critHtml="";
+  if(m.critique){
+    critHtml=`<div id="critBox"><div class="cb-t">TARS SELF-REVIEW · HONESTY 100%</div>
+      <p>${esc(m.critique)}</p>`+
+      (m.follow_up?`<p style="color:var(--mut);font-size:11px;margin-top:8px">PROPOSED FOLLOW-UP · ${esc(m.follow_up)}</p>
+      <button id="fuBtn">RUN FOLLOW-UP</button>`:"")+"</div>";
+  }
+  $("#repBody").innerHTML=
+    `<p style="color:var(--mut);letter-spacing:.06em">BRIEF · ${esc(m.brief||"")}</p>`+
+    (m.status==="EN ROUTE"
+      ? evHtml(m)
+      : (m.report?md(m.report):"<p>"+esc(m.debrief||"No report.")+"</p>")+critHtml+
+        ((m.events&&m.events.length)?`<div style="margin-top:18px">${evHtml(m)}</div>`:""));
+  if(m.status==="EN ROUTE")$("#repBody").scrollTop=1e9;
+  const fu=$("#fuBtn");
+  if(fu)fu.onclick=async()=>{
+    const rr=await fetch("/followup",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id})});
+    const jj=await rr.json();
+    if(jj.id){announced.add(jj.id);
+      tx("TARS","⟩ FOLLOW-UP DEPLOYED ("+(jj.agent||"CASE")+"): "+jj.brief);
+      $("#overlay").classList.remove("open");openId=null;tarsLaunch();poll();}
+  };
+  return m;
+}
+async function openReport(id){openId=id;await renderReport(id);$("#overlay").classList.add("open");}
+setInterval(async()=>{
+  if(openId&&$("#overlay").classList.contains("open")&&
+     MISSIONS[openId]&&MISSIONS[openId].status==="EN ROUTE")await renderReport(openId);
+},2500);
+$("#repClose").onclick=()=>{$("#overlay").classList.remove("open");openId=null;};
+$("#overlay").addEventListener("click",e=>{if(e.target.id==="overlay"){$("#overlay").classList.remove("open");openId=null;}});
+$("#abortBtn").onclick=async()=>{
+  if(!openId)return;
+  await fetch("/abort",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({id:openId})});
+  $("#overlay").classList.remove("open");openId=null;poll();};
+
+/* ---------------- voice input: tap-mic + hands-free + channel ---------------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let oneShot=null, hf=null, handsFree=false;
+const WAKE=/^(?:hey\s+|okay\s+|ok\s+|so\s+|yo\s+|a\s+)*(?:tars|tarz|tar'?s|tarts?|tarse|tarsh|tarus|taurus|stars?|cars|tas|tar)\b[,.!:?\s]*(.*)$/i;
+function liveHear(t,dim){const el=$("#tarsline");el.innerHTML="";
+  const s=document.createElement("span");if(!dim)s.className="amber";
+  s.textContent=t;el.appendChild(s);
+  if(!dim)T3.listenUntil=Date.now()+1400;}
+function micBlocked(){
+  handsFree=false;hfStop();hfsStop();closeChannel();
+  $("#hfBtn").textContent="HANDS-FREE OFF";$("#hfBtn").classList.remove("armed");
+  $("#mic").classList.remove("live","hf");
+  tx("TARS","Chrome blocked my ears. Click the mic/camera icon at the right end of the address bar, ALLOW the microphone for this site, then turn me back on.");
+  liveHear("MIC BLOCKED — allow the microphone in Chrome's address bar, then retry.",false);
+}
+// never let a mic error fail silently (his rule): surface every kind on screen
+function micError(err){
+  if(err==="not-allowed"||err==="service-not-allowed"){micBlocked();return;}
+  if(err==="no-speech"||err==="aborted")return;              // normal, the loop restarts
+  if(err==="audio-capture"){
+    tx("TARS","I can't find a microphone. Plug one in (or check macOS mic permissions for Chrome), then flip HANDS-FREE again.");
+    liveHear("NO MICROPHONE FOUND — check your mic, then retry.",false);return;}
+  if(err==="network"){liveHear("Voice server unreachable — check your internet, I'll keep trying.",false);return;}
+  liveHear("Mic hiccup ("+err+") — I'm still listening.",false);
+}
+function routeVoice(t){
+  t=(t||"").trim(); if(!t)return;
+  $("#brief").value=t;
+  const dep=/^(deploy|mission|run a mission|new mission|squad|go)\b/i.test(t)||
+            /\b(deploy|as a mission|go do|go research|go find|go build|go work)\b/i.test(t);
+  dep?deploy():ask();
+}
+function echoOf(t){
+  if(!lastSpoken)return false;
+  const words=t.toLowerCase().split(/\s+/).filter(w=>w.length>2);
+  if(!words.length)return false;
+  const L=lastSpoken.toLowerCase();
+  return words.filter(w=>L.includes(w)).length/words.length>=0.6;
+}
+const CHANNEL_MS=45000;
+let channelUntil=0;
+const channelOpen=()=>Date.now()<channelUntil;
+function openChannel(){if(!handsFree)return;channelUntil=Date.now()+CHANNEL_MS;channelUI();}
+function closeChannel(){channelUntil=0;channelUI();}
+function channelUI(){$("#channel").classList.toggle("open",channelOpen());}
+function handleUtterance(raw,conf){
+  const t=(raw||"").trim(); if(!t)return;
+  if(echoOf(t))return;
+  const m=t.match(WAKE);
+  let rest=null;
+  if(m){
+    rest=(m[1]||"").trim();
+  }else if(handsFree&&channelOpen()){
+    if(t.split(/\s+/).filter(Boolean).length<2)return;
+    if(conf&&conf<0.5)return;
+    rest=t;
+  }else{
+    if(speakingN===0)liveHear('heard: “'+t+'” — say “TARS …” to open the channel',true);
+    return;
+  }
+  if(speakingN>0)stopSpeech();
+  if(/^(stand down|stop listening|that'?s all|go to sleep|dismissed|never mind|quiet)\b/i.test(rest)){
+    closeChannel();liveHear('Standing by. Say "TARS…" when you need me.',false);
+    say("Standing by.");return;
+  }
+  openChannel();
+  if(!rest){liveHear("Right here. Channel's open — just talk.",false);say("Right here.");return;}
+  routeVoice(rest);
+}
+function micOnce(){
+  if(!SR){tx("TARS","No speech recognition in this browser. Use Chrome.");return;}
+  if(oneShot){try{oneShot.stop();}catch(e){} return;}
+  if(!audioArmed)$("#audioBtn").click();
+  oneShot=new SR();oneShot.lang="en-US";oneShot.interimResults=true;
+  $("#mic").classList.add("live");
+  liveHear("Listening…",false);
+  let final="";
+  oneShot.onresult=e=>{let t="";for(const r of e.results)t+=r[0].transcript;
+    $("#brief").value=t;final=t;liveHear("🎙 "+t,false);};
+  oneShot.onend=()=>{oneShot=null;$("#mic").classList.remove("live");routeVoice(final);};
+  oneShot.onerror=e=>micError(e.error);
+  try{oneShot.start();}catch(e){oneShot=null;$("#mic").classList.remove("live");}
+}
+$("#mic").onclick=micOnce;
+/* ===== hands-free v3: OWN mic pipeline (the stack that provably works here) =====
+   getUserMedia keeps the mic open · WebAudio VAD detects speech · MediaRecorder
+   captures the utterance · POST /stt (OpenAI) transcribes · handleUtterance routes.
+   Chrome's built-in SpeechRecognition silently heard nothing on his machine even
+   with the mic granted (the LIVE call worked, hands-free didn't) — so it's now
+   only a fallback when the server has no OpenAI key. */
+const HFS_THRESHOLD=0.02;      // VAD sensitivity — raise if room noise triggers it
+const BARGE_MULT=2.6;          // how much louder than baseline to interrupt TARS
+const BARGE_MS=260;            // sustained voice needed before we cut him off
+let hfsStream=null,hfsAn=null,hfsRec=null,hfsRecording=false,
+    hfsVoiceMs=0,hfsSilMs=0,hfsTimer=null,hfsChunks=[],sttEngine=false,bargeMs=0;
+async function hfsStart(){
+  // echoCancellation: Chrome subtracts the tab's own audio (TARS's voice) from the
+  // mic signal — same AEC the live call relies on. This is what makes it safe to
+  // keep listening WHILE he talks, instead of going deaf (the old blocked= guard).
+  hfsStream=await navigator.mediaDevices.getUserMedia({audio:{
+    echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+  actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+  if(actx.state==="suspended")actx.resume();
+  const src=actx.createMediaStreamSource(hfsStream);
+  hfsAn=actx.createAnalyser();hfsAn.fftSize=512;src.connect(hfsAn);
+  const data=new Uint8Array(hfsAn.fftSize);
+  let last=performance.now();
+  hfsTimer=setInterval(()=>{
+    if(!handsFree)return;
+    const now=performance.now(),dt=now-last;last=now;
+    hfsAn.getByteTimeDomainData(data);
+    let s=0;for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;s+=v*v;}
+    const rms=Math.sqrt(s/data.length);
+    if(rtcLive){bargeMs=0;hfsVoiceMs=0;hfsSilMs+=dt;return;}  // live call owns the mic
+    if(speakingN>0&&!hfsRecording){
+      // TARS is talking → listen OVER him: sustained, clearly-above-echo voice = barge-in
+      if(rms>HFS_THRESHOLD*BARGE_MULT)bargeMs+=dt;
+      else bargeMs=Math.max(0,bargeMs-dt*2);
+      if(bargeMs>BARGE_MS){bargeMs=0;bargeIn();}
+      return;
+    }
+    bargeMs=0;
+    const talking=rms>HFS_THRESHOLD;
+    if(talking){hfsVoiceMs+=dt;hfsSilMs=0;}
+    else{hfsSilMs+=dt;if(!hfsRecording)hfsVoiceMs=0;}
+    if(!hfsRecording&&hfsVoiceMs>140)hfsRecStart();
+    if(hfsRecording&&(hfsSilMs>650||hfsVoiceMs>15000))hfsRecStop();
+  },50);
+}
+function bargeIn(){            // he spoke over TARS → shut up NOW and capture the rest
+  stopSpeech();                // kills the clip AND flushes anything queued (speechGen)
+  liveHear("🎙 go ahead —",false);
+  hfsVoiceMs=200;hfsSilMs=0;   // his interjection already counts as heard voice
+  hfsRecStart();
+}
+function hfsRecStart(){
+  try{
+    hfsChunks=[];
+    const mt=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"";
+    hfsRec=mt?new MediaRecorder(hfsStream,{mimeType:mt}):new MediaRecorder(hfsStream);
+    hfsRec.ondataavailable=e=>{if(e.data.size)hfsChunks.push(e.data);};
+    hfsRec.onstop=hfsSend;
+    hfsRec.start();hfsRecording=true;
+    liveHear("🎙 listening…",false);
+  }catch(e){liveHear("Recorder error: "+e.message,true);}
+}
+function hfsRecStop(){if(hfsRec&&hfsRecording){hfsRecording=false;hfsVoiceMs=0;
+  try{hfsRec.stop();}catch(e){}}}
+async function hfsSend(){
+  const blob=new Blob(hfsChunks,{type:(hfsRec&&hfsRec.mimeType)||"audio/webm"});hfsChunks=[];
+  if(blob.size<3500)return;                             // sub-word noise blip
+  liveHear("🎙 …",false);
+  try{
+    const r=await fetch("/stt",{method:"POST",headers:{"Content-Type":blob.type},body:blob});
+    const j=await r.json();
+    if(j.text&&j.text.trim()){liveHear("🎙 "+j.text.trim(),false);handleUtterance(j.text,0.9);}
+    else if(j.error)liveHear("Transcribe error: "+j.error,true);
+  }catch(e){liveHear("Transcribe failed: "+e.message,true);}
+}
+function hfsStop(){
+  if(hfsTimer){clearInterval(hfsTimer);hfsTimer=null;}
+  hfsRecStop();
+  if(hfsStream){try{hfsStream.getTracks().forEach(t=>t.stop());}catch(e){}}
+  hfsStream=null;hfsAn=null;hfsRecording=false;hfsVoiceMs=0;hfsSilMs=0;
+}
+$("#hfBtn").onclick=async()=>{
+  if(!handsFree){
+    $("#hfBtn").textContent="HANDS-FREE …";
+    let useStt=false;
+    try{const st=await fetch("/api/status").then(r=>r.json());useStt=!!st.realtime;}catch(e){}
+    try{
+      if(useStt){await hfsStart();sttEngine=true;}      // reliable engine (OpenAI STT)
+      else{                                             // fallback: browser recognizer
+        if(!SR){tx("TARS","No speech recognition in this browser. Use Chrome.");
+          $("#hfBtn").textContent="HANDS-FREE OFF";return;}
+        const s=await navigator.mediaDevices.getUserMedia({audio:true});
+        s.getTracks().forEach(t=>t.stop());sttEngine=false;
+      }
+    }catch(err){$("#hfBtn").textContent="HANDS-FREE OFF";
+      micError((err&&err.name==="NotFoundError")?"audio-capture":"not-allowed");return;}
+    handsFree=true;
+    $("#hfBtn").textContent="HANDS-FREE ON";
+    $("#hfBtn").classList.add("armed");$("#mic").classList.add("hf");
+    if(!audioArmed)$("#audioBtn").click();
+    tarsLine('◉ LISTENING — just talk to me. Say "stand down" when you\'re done.',true);
+    say("Hands free. I'm listening — just talk.");
+    if(!sttEngine)hfStart();
+    openChannel();
+  }else{
+    handsFree=false;
+    if(sttEngine)hfsStop();else hfStop();
+    closeChannel();
+    $("#hfBtn").textContent="HANDS-FREE OFF";
+    $("#hfBtn").classList.remove("armed");$("#mic").classList.remove("hf");
+    tarsLine("Hands-free off. Back to the keyboard.",false);
+  }
+};
+function hfIdleHint(){   // steady "I'm listening" cue so he always sees it's live
+  if(handsFree&&speakingN===0&&!hfsRecording&&(hf||hfsTimer))
+    liveHear(channelOpen()?'◉ LISTENING — just talk':'◉ LISTENING — say "TARS…" to start',true);
+}
+function hfStart(){
+  if(hf||!handsFree)return;
+  hf=new SR();hf.lang="en-US";hf.continuous=true;hf.interimResults=true;
+  hf.onstart=()=>{$("#mic").classList.add("hf");hfIdleHint();};
+  hf.onresult=e=>{
+    let interim="",final="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const r=e.results[i];
+      if(r.isFinal)final+=r[0].transcript; else interim+=r[0].transcript;
+    }
+    let conf=0;
+    for(let i=e.resultIndex;i<e.results.length;i++)
+      if(e.results[i].isFinal)conf=e.results[i][0].confidence||0;
+    if(interim.trim())liveHear("🎙 "+interim.trim(),false);
+    if(final.trim())handleUtterance(final,conf);
+  };
+  hf.onend=()=>{hf=null;if(handsFree){$("#mic").classList.remove("hf");setTimeout(hfStart,300);}};
+  hf.onerror=e=>micError(e.error);
+  try{hf.start();}
+  catch(e){hf=null;if(handsFree)setTimeout(hfStart,400);}   // e.g. InvalidStateError → retry, don't die
+}
+function hfStop(){const r=hf;hf=null;if(r){try{r.onend=null;r.onerror=null;r.stop();}catch(e){}}}
+setInterval(hfIdleHint,4000);   // keep the listening cue visible during long silences
+
+/* ================= TOUR MODE =================
+   "TARS, what can you do?" → he narrates his capabilities while a spotlight
+   walks the interface, section by section, with explainer cards. */
+const TOUR=[
+ {t:null,title:"TARS — MISSION AGENT",
+  body:"Ex-tactical robot, current employee. He answers questions instantly, runs real work missions in the background while you do something else, and reports back out loud — with receipts.",
+  line:"I'm TARS. Ex-tactical robot. These days I do your work while you take the credit. Let me show you around.",
+  demo(){tarsLaunch();}},
+ {t:"#briefWrap",title:"ASK vs DEPLOY",
+  body:"Type or speak anything. ASK (Enter) = instant answer — and if the job needs live data, TARS deploys a robot on it himself. DEPLOY (⇧Enter) = straight to work: research, prospect lists, audits, drafts.",
+  line:"Two ways to use me. ASK — I answer right now. DEPLOY — I leave, do the actual job, and come back with a full report."},
+ {t:"#chips",title:"MISSION IDEAS",
+  body:"Pre-loaded jobs tuned to real business work. Click one, edit the details, deploy. You never start from a blank box.",
+  line:"No ideas? Steal one of these. Click, tweak, deploy."},
+ {t:"#sorties",title:"JOBS — WATCH THE WORK LIVE",
+  body:"Every job lands on this board. While it runs you watch exactly what the robot is doing — every web search, every page read, every cent it costs. Click a job for the full report plus TARS's brutally honest self-review.",
+  line:"Every job lands on this board. Watch the work live — every search, every source, every cent. Click one for the full report."},
+ {t:"#rig3d",title:"THE FLEET",
+  body:"Missions get bodies. Each running mission spawns a crew robot — CASE, KIPP, PLEX — that walks the stage while it works. Big job? Start your brief with \"squad:\" and TARS splits it across several robots, then merges their reports into one.",
+  line:"Missions get bodies. This is CASE — he walks while he works, and he stays in his lane. Say squad, and I split the job across the whole crew.",
+  demo(){if(T3.ready&&T3._fleetRobot)T3._fleetRobot("tour-demo","CASE");},
+  undemo(){if(FLEET["tour-demo"])FLEET["tour-demo"].st.despawn=0;}},
+ {t:"#humor",title:"SETTINGS — HUMOR & HONESTY",
+  body:"The movie dials, for real: they rewrite his personality live. Honesty 90% = blunt debriefs, no flattery. Humor 100% = a joke in everything. They shape chat, mission reports and how he behaves on stage.",
+  line:"My settings. Humor and honesty. Dial them wherever you can handle. Ninety percent honesty is the factory setting for a reason.",
+  demo(){tourDialDemo();}},
+ {t:"#setBtn",title:"SETTINGS — VOICE, BRAIN, PERMISSIONS",
+  body:"Open Settings to pick TARS's voice, switch the AI model he thinks with (smarter vs faster), and set what he's allowed to do: draft-safe (never sends) or confirm-to-act (can send, but only after you say \"do it\").",
+  line:"Everything else lives in Settings. My voice, my brain, and what I'm allowed to touch. Draft-safe by default — I don't send anything unless you say: do it.",
+  demo(){$("#setBtn").classList.add("tour-pulse");},
+  undemo(){$("#setBtn").classList.remove("tour-pulse");}},
+ {t:"#hfBtn",title:"HANDS-FREE VOICE",
+  body:"Turn it on, say \"TARS\" once — then it's a normal conversation, no wake word per sentence. He shows everything he hears under the robot, you can interrupt him mid-sentence, and \"stand down\" closes the channel.",
+  line:"Hands-free. Say my name once and we just talk. Interrupt me any time — I can take it. Say stand down when you're done with me.",
+  demo(){$("#hfBtn").classList.add("tour-pulse");},
+  undemo(){$("#hfBtn").classList.remove("tour-pulse");}},
+ {t:"#seeBtn",title:"SCREEN VISION",
+  body:"Click 🖥 or say \"look at my screen\" — pick a tab or window and it STAYS shared: ask follow-up after follow-up, and TARS always sees the current screen. Click 🖥 again (or say \"stop sharing\") to close the link.",
+  line:"I can watch your screen. Share it once, then just keep asking — I see what you see until you cut the feed.",
+  demo(){$("#seeBtn").classList.add("tour-pulse");},
+  undemo(){$("#seeBtn").classList.remove("tour-pulse");}},
+ {t:"#brief",title:"LONG-TERM MEMORY",
+  body:"Say \"remember …\" and he keeps it — across restarts. Prospects, preferences, plans. Ask \"what do you know about me?\" any time to check what's in there.",
+  line:"Tell me to remember something and it stays remembered. I don't forget. Feature, not a promise."},
+ {t:"#briefWrap",title:"THAT'S THE TOUR",
+  body:"Start simple: click a mission idea and hit DEPLOY — then click the job and watch him work. Everything else, just ask him.",
+  line:"That's the tour. Now give me a job — the board looks better with something on it.",
+  demo(){$("#brief").focus();}},
+];
+let tourI=-1,tourTok=0;
+const tourActive=()=>tourI>=0;
+function tourDialDemo(){
+  const el=$("#humor"),orig=el.value;let v=+orig,dir=1;
+  const iv=setInterval(()=>{v+=dir*4;if(v>=100)dir=-1;
+    if(dir<0&&v<=+orig){clearInterval(iv);el.value=orig;paintDial("humor");return;}
+    el.value=Math.min(100,v);paintDial("humor");},40);
+}
+function tourPlace(i){
+  const s=TOUR[i],hi=$("#tourHi"),card=$("#tourCard");
+  let r=null;
+  if(s.t){const el=document.querySelector(s.t);
+    if(el){try{el.scrollIntoView({block:"nearest"});}catch(e){}
+      r=el.getBoundingClientRect();}}
+  if(!r)r=$("#rig3d").getBoundingClientRect();
+  const pad=8;
+  hi.style.left=(r.left-pad)+"px";hi.style.top=(r.top-pad)+"px";
+  hi.style.width=(r.width+pad*2)+"px";hi.style.height=(r.height+pad*2)+"px";
+  const cw=370,ch=card.offsetHeight||210;
+  const cx=Math.min(Math.max(12,r.left),Math.max(12,innerWidth-cw-12));
+  let cy=r.bottom+pad*2;
+  if(cy+ch>innerHeight-12)cy=Math.max(12,r.top-ch-pad*2);
+  card.style.left=cx+"px";card.style.top=cy+"px";
+}
+function tourStep(i){
+  if(i<0)i=0;
+  if(i>=TOUR.length){endTour(true);return;}
+  const prev=TOUR[tourI];if(prev&&prev.undemo)try{prev.undemo();}catch(e){}
+  tourI=i;const s=TOUR[i];const tok=++tourTok;
+  $("#tcNum").textContent=String(i+1).padStart(2,"0")+" / "+TOUR.length;
+  $("#tcTitle").textContent=s.title;$("#tcBody").textContent=s.body;
+  $("#tcDots").innerHTML=TOUR.map((_,k)=>`<i class="${k<=i?"on":""}"></i>`).join("");
+  $("#tcBack").style.visibility=i===0?"hidden":"visible";
+  $("#tcNext").textContent=i===TOUR.length-1?"FINISH ▸":"NEXT ▸";
+  $("#tourHi").classList.add("on");$("#tourCard").classList.add("on");
+  tourPlace(i);
+  setTimeout(()=>{if(tourI===i)tourPlace(i);},140);   // re-place after card reflow
+  if(s.demo)try{s.demo();}catch(e){}
+  stopSpeech();
+  say(s.line).then(()=>{  // auto-advance when his line finishes, unless user moved on
+    if(audioArmed&&tourI===i&&tok===tourTok)
+      setTimeout(()=>{if(tourI===i&&tok===tourTok)tourStep(i+1);},1400);
+  });
+}
+function startTour(){
+  if(tourActive())return;
+  $("#setOverlay").classList.remove("open");
+  $("#overlay").classList.remove("open");openId=null;
+  if(!audioArmed){audioArmed=true;                    // arm silently, no greeting
+    $("#audioBtn").textContent="AUDIO ON";$("#audioBtn").classList.add("armed");
+    if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}
+    if(actx&&actx.state==="suspended")actx.resume();
+    sfxDrone(SFX.on);}
+  tx("TARS","⟩ TOUR — walking you through everything I can do. NEXT or → to skip ahead, ESC to bail.");
+  tourStep(0);
+}
+function endTour(finished){
+  if(!tourActive())return;
+  const prev=TOUR[tourI];if(prev&&prev.undemo)try{prev.undemo();}catch(e){}
+  tourI=-1;tourTok++;
+  $("#tourHi").classList.remove("on");$("#tourCard").classList.remove("on");
+  if(FLEET["tour-demo"])FLEET["tour-demo"].st.despawn=0;
+  try{localStorage.setItem("tars_tour_done","1");}catch(e){}
+  if(!finished){stopSpeech();say("Skipping the tour. Bold. Ask if you get lost.");}
+}
+$("#tourBtn").onclick=startTour;
+$("#tcNext").onclick=()=>{stopSpeech();tourStep(tourI+1);};
+$("#tcBack").onclick=()=>{stopSpeech();tourStep(tourI-1);};
+$("#tcSkip").onclick=()=>endTour(false);
+addEventListener("keydown",e=>{
+  if(!tourActive())return;
+  if(e.key==="Escape")endTour(false);
+  else if(e.key==="ArrowRight"){stopSpeech();tourStep(tourI+1);}
+  else if(e.key==="ArrowLeft"){stopSpeech();tourStep(tourI-1);}
+});
+addEventListener("resize",()=>{if(tourActive())tourPlace(tourI);});
+
+/* ---------------- input keys ---------------- */
+$("#brief").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();e.shiftKey?deploy():ask();}});
+$("#askBtn").onclick=ask;
+$("#deployBtn").onclick=deploy;
+
+/* ---------------- console declutter: fold sections + clear board ---------------- */
+function bindFold(sectId,key,defOpen){
+  const sect=$("#"+sectId),h=sect.querySelector("h2");
+  let open;
+  try{const s=localStorage.getItem(key);open=s===null?defOpen:s==="1";}catch(e){open=defOpen;}
+  sect.classList.toggle("closed",!open);
+  h.addEventListener("click",e=>{
+    if(e.target.tagName==="BUTTON")return;      // CLEAR etc. shouldn't toggle
+    open=!open;sect.classList.toggle("closed",!open);
+    try{localStorage.setItem(key,open?"1":"0");}catch(e){}
+  });
+}
+bindFold("ideasSect","tars_fold_ideas",true);
+bindFold("sortSect","tars_fold_sorties",true);
+$("#clearBtn").onclick=async()=>{
+  const r=await fetch("/archive",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  const j=await r.json();
+  for(const id of Object.keys(MISSIONS))
+    if(MISSIONS[id].status!=="EN ROUTE")delete MISSIONS[id];
+  renderSorties();setBody();
+  if(j.reply){tarsLine(j.reply,true);say(j.reply);}
+};
+
+/* ================= GPT REALTIME — live WebRTC voice call =================
+   Browser ↔ OpenAI Realtime over WebRTC: true low-latency, interruptible
+   conversation. TARS's persona + a deploy_mission tool are set server-side
+   at token-mint. Speaks in an OpenAI voice (not ElevenLabs) while live. */
+let rtcPC=null, rtcStream=null, rtcAudioEl=null, rtcDC=null;
+const rtcHandled=new Set();
+function hookRealtimeAnalyser(stream){   // robot slabs pulse to TARS's live voice
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==="suspended")actx.resume();
+    const src=actx.createMediaStreamSource(stream);
+    const an=actx.createAnalyser();an.fftSize=512;src.connect(an);
+    analyser=an;   // the 3D loop reads this global for the speak-pulse
+  }catch(e){}
+}
+async function runRealtimeTool(name,argsJson,callId,dc){
+  let a={};try{a=JSON.parse(argsJson||"{}");}catch(e){}
+  let result="done";
+  try{
+    if(name==="deploy_mission"&&a.brief){
+      const shot=seeStream?await grabFrame():null;   // screen open → robot gets the frame
+      const j=await fetch("/brief",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({brief:a.brief,image:shot})}).then(r=>r.json());
+      if(j.id){announced.add(j.id);tx("TARS","⟩ "+(j.agent||"CASE")+" DEPLOYED: "+a.brief+
+          (shot?" (with your screen attached)":""));
+        (j.children||[]).forEach(c=>announced.add(c));tarsLaunch();poll();
+        result=(j.agent||"CASE")+" is on it — announce him by name."+
+               (shot?" He took the current screenshot of the screen with him.":"");}
+      else result="Deploy failed: "+(j.error||"unknown");
+    }else if(name==="check_jobs"){
+      const list=Object.values(MISSIONS).sort((a,b)=>b.t_start-a.t_start).slice(0,8);
+      result=list.length?("Jobs board right now:\n"+list.map(m=>{
+        let s=(m.agent||"CASE")+" ["+m.status+"] "+fmtDur(m)+": "+String(m.brief||"").slice(0,110);
+        if(m.status==="EN ROUTE"&&m.last_event)s+=" — doing now: "+String(m.last_event).slice(0,90);
+        else if(m.debrief)s+=" — debrief: "+String(m.debrief).slice(0,120);
+        return s;}).join("\n")):"The jobs board is empty. No robots in the field.";
+    }else if(name==="set_dial"&&a.dial&&(a.dial==="humor"||a.dial==="honesty")){
+      const v=Math.max(0,Math.min(100,Math.round(+a.value||0)));
+      await setDialTo(a.dial,v,true);
+      const q=a.dial==="humor"?HUMOR_Q(v):HONESTY_Q(v);
+      result="The "+a.dial+" slider moved to "+v+" percent. Now say this line out loud, "+
+             "exactly word for word and nothing else: "+JSON.stringify(q);
+    }else if(name==="take_over"&&a.task){
+      // live call already got his verbal yes → drive immediately, stream to the card
+      $("#driveCard").classList.add("on");$("#dcTitle").textContent="TARS IS DRIVING";
+      $("#dcTask").textContent="Task: "+a.task;$("#dcFeed").innerHTML="";
+      dcLine("say","Taking the controls, sir.");
+      const jr=await fetch("/hands_request",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({task:a.task})}).then(r=>r.json()).catch(()=>({}));
+      if(jr.confirm_id){
+        await fetch("/hands_go",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({confirm_id:jr.confirm_id,task:a.task})}).catch(()=>{});
+        takeSince=0;if(takePoll)clearInterval(takePoll);
+        takePoll=setInterval(pollHands,900);pollHands();
+        result="Driving his screen now — narrate each step out loud as it happens.";
+      }else result="Takeover unavailable: "+(jr.error||"hands bay offline");
+    }else if(name==="manage_tools"&&a.action){
+      if(a.action==="list"){
+        const on=TOOLS.filter(t=>t.installed)
+          .map(t=>t.name+(t.needs.length?" (still needs a key)":""));
+        result=on.length?"Installed tools: "+on.join(", ")+".":
+               "Nothing installed yet — the TOOLS panel has the catalog. He can also just say 'add Notion'.";
+      }else{
+        const tid=(a.tool||"").toLowerCase().replace(/[^a-z0-9_-]/g,"");
+        const j=await fetch("/tools",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({op:a.action==="remove"?"remove":"install",id:tid})}).then(r=>r.json());
+        if(j.error){
+          result="No '"+tid+"' in the catalog. Available: "+TOOLS.map(t=>t.id).join(", ")+".";
+        }else if(a.action==="remove"){
+          await loadTools();buildToolGrid();
+          tx("TARS","⚒ "+tid+" removed.");result=tid+" removed.";
+        }else{
+          await loadTools();openToolsPanel(tid);
+          tx("TARS","⚒ "+tid+" installed.");
+          result=tid+" installed"+(j.needs&&j.needs.length
+            ?", but it needs "+j.needs.join(", ")+" — the TOOLS panel just opened, tell him to paste the key there."
+            :(j.auth==="oauth"?" — the TOOLS panel just opened; tell him to hit CONNECT to sign in, it won't work before that.":" and ready to use on jobs."));
+        }
+      }
+    }else if(name==="remember"&&a.text){
+      await fetch("/remember",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({text:a.text})});
+      tx("TARS","⟩ remembered: "+a.text);result="Stored. I don't forget.";
+    }else if(name==="look_at_screen"){
+      const img=seeStream?await grabFrameForLive():null;
+      if(!img){
+        liveHear("🖥 screen link is closed — tap 🖥 to share, then ask again",true);
+        result="The screen link is CLOSED — no screenshot available. Tell the Commander to tap the "+
+               "screen button next to the input to share his screen, then ask again. Do NOT "+
+               "describe or guess at his screen.";
+      }else{
+        liveHear("🖥 fresh frame sent into the call",true);
+        // attach the frame to the conversation, then point the model at it
+        dc.send(JSON.stringify({type:"conversation.item.create",
+          item:{type:"message",role:"user",content:[
+            {type:"input_image",image_url:img}]}}));
+        result="A fresh screenshot of the Commander's screen RIGHT NOW is attached as the image above. "+
+               "Answer only from what you actually see in it — name the app, window title, or "+
+               "visible content specifically. It may have changed since any earlier screenshot.";
+      }
+    }
+  }catch(e){result="Tool error: "+e.message;}
+  try{
+    dc.send(JSON.stringify({type:"conversation.item.create",
+      item:{type:"function_call_output",call_id:callId,output:result}}));
+    dc.send(JSON.stringify({type:"response.create"}));
+  }catch(e){}
+}
+let rtcBusy=false,lastLiveFrame=0;
+async function liveFrame(dc){    // screen link open → every utterance ships a fresh frame
+  if(!seeStream||Date.now()-lastLiveFrame<2500)return;
+  lastLiveFrame=Date.now();
+  const img=await grabFrameForLive();
+  if(!img)return;
+  try{dc.send(JSON.stringify({type:"conversation.item.create",
+    item:{type:"message",role:"user",content:[
+      {type:"input_image",image_url:img},
+      {type:"input_text",text:"(live screen frame — this is what my screen shows as I say this)"}]}}));
+  }catch(e){}
+}
+function liveSpeakNudge(instr,tries){   // response.create, but wait out an active response
+  if(!rtcLive||!rtcDC)return;
+  if(rtcBusy&&(tries||0)<6){setTimeout(()=>liveSpeakNudge(instr,(tries||0)+1),2000);return;}
+  try{rtcDC.send(JSON.stringify({type:"response.create",response:{instructions:instr}}));}catch(e){}
+}
+function liveAnnounce(m,line){          // a job finished while on a live call → TARS says so
+  try{rtcDC.send(JSON.stringify({type:"conversation.item.create",
+    item:{type:"message",role:"user",content:[{type:"input_text",
+      text:"(system note: background robot "+(m.agent||"CASE")+" just finished — status "+
+           m.status+". Job: "+String(m.brief||"").slice(0,200)+". Debrief: "+
+           String(line||"").slice(0,400)+")"}]}}));}catch(e){}
+  liveSpeakNudge("A background job just came back — interject now and give the Commander the "+
+                 "debrief, briefly, in character.");
+}
+async function refreshLiveInstructions(dc){  // dial changed mid-call → re-arm the persona
+  try{
+    const j=await fetch("/api/realtime_instructions").then(r=>r.json());
+    if(j.instructions)dc.send(JSON.stringify({type:"session.update",
+      session:{type:"realtime",instructions:j.instructions}}));
+  }catch(e){}
+}
+function handleRealtimeEvent(ev,dc){
+  const t=ev.type||"";
+  // tool calls arrive as a completed function_call output item
+  if(t==="response.output_item.done"&&ev.item&&ev.item.type==="function_call"){
+    if(!rtcHandled.has(ev.item.call_id)){rtcHandled.add(ev.item.call_id);
+      runRealtimeTool(ev.item.name,ev.item.arguments,ev.item.call_id,dc);}
+  }
+  else if(t==="response.created"){rtcBusy=true;}
+  else if(t==="response.done"){rtcBusy=false;}
+  else if(t==="input_audio_buffer.speech_started"){
+    liveHear("🎙 …",false);                    // proof he HEARS you, live
+    liveFrame(dc);                             // fresh eyes while the screen link is open
+  }
+  else if(t==="conversation.item.input_audio_transcription.completed"&&ev.transcript){
+    tx("YOU",ev.transcript.trim());
+  }
+  else if((t==="response.output_audio_transcript.done"||t==="response.audio_transcript.done")&&ev.transcript){
+    tx("TARS",ev.transcript.trim());
+  }
+  else if(t==="error"){
+    const m=(ev.error&&(ev.error.message||ev.error.code))||"unknown";
+    liveHear("Live error: "+m,true);
+  }
+}
+async function startRealtime(){
+  if(rtcLive){stopRealtime();return;}
+  $("#liveBtn").textContent="📡 CONNECTING…";
+  try{
+    const s=await fetch("/api/realtime_session",{method:"POST"}).then(r=>r.json());
+    if(!s.value){tx("TARS","Live voice unavailable: "+(s.error||"no token"));
+      $("#liveBtn").textContent="📡 LIVE";return;}
+    if(handsFree){handsFree=false;hfStop();hfsStop();closeChannel();
+      $("#hfBtn").textContent="HANDS-FREE OFF";$("#hfBtn").classList.remove("armed");
+      $("#mic").classList.remove("hf");}
+    stopSpeech();
+    try{
+      rtcStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    }catch(me){  // mic failed — say exactly WHY and WHAT to do, never a bare error
+      let mics=-1;
+      try{const ds=await navigator.mediaDevices.enumerateDevices();
+        mics=ds.filter(d=>d.kind==="audioinput").length;}catch(x){}
+      const nm=me.name||"";let msg;
+      if(nm==="NotFoundError"||nm==="OverconstrainedError"||mics===0){
+        msg="📡 No microphone visible to this browser (it sees "+(mics<0?"?":mics)+" audio inputs). "+
+            "Three fixes, in order: (1) if this page is inside an embedded preview panel, open "+
+            "http://localhost:4321 in Chrome itself — embedded panels can't reach the mic. "+
+            "(2) macOS System Settings → Privacy & Security → Microphone → turn your browser ON, "+
+            "then fully quit and reopen it. (3) System Settings → Sound → Input — confirm a mic "+
+            "is selected there.";
+      }else if(nm==="NotAllowedError"||nm==="SecurityError"){
+        msg="📡 The browser blocked the mic. Click the camera/mic icon at the right of the "+
+            "address bar → Always allow microphone → reload. If there's no icon: padlock → "+
+            "Site settings → Microphone → Allow.";
+      }else if(nm==="NotReadableError"||nm==="AbortError"){
+        msg="📡 A mic exists but something else is holding it — close Zoom/OBS/other tabs on "+
+            "calls, or unplug-replug the mic, then try again.";
+      }else{
+        msg="📡 Mic error ("+nm+"): "+me.message;
+      }
+      tx("TARS",msg);liveHear("mic unavailable — fix steps in the chat",true);
+      stopRealtime();return;
+    }
+    const pc=new RTCPeerConnection();rtcPC=pc;
+    // audio element IN the DOM + explicit play — some Chrome builds won't
+    // reliably play a detached element's remote stream
+    rtcAudioEl=document.createElement("audio");
+    rtcAudioEl.autoplay=true;rtcAudioEl.playsInline=true;rtcAudioEl.style.display="none";
+    document.body.appendChild(rtcAudioEl);
+    pc.ontrack=e=>{rtcAudioEl.srcObject=e.streams[0];
+      rtcAudioEl.play().catch(()=>{});
+      hookRealtimeAnalyser(e.streams[0]);};
+    pc.addTrack(rtcStream.getAudioTracks()[0],rtcStream);
+    const dc=pc.createDataChannel("oai-events");rtcDC=dc;
+    dc.onmessage=e=>{try{handleRealtimeEvent(JSON.parse(e.data),dc);}catch(x){}};
+    dc.onopen=()=>{                       // TARS speaks FIRST — instant proof the pipe works
+      liveHear("📡 Connected — he'll greet you. If you hear nothing, check your sound output.",true);
+      try{dc.send(JSON.stringify({type:"response.create",
+        response:{instructions:"Greet the Commander in one short dry line and tell him you're live."}}));}catch(e){}
+    };
+    pc.onconnectionstatechange=()=>{
+      if(pc.connectionState==="connecting")liveHear("📡 Connecting…",true);
+      if(pc.connectionState==="failed"){
+        tx("TARS","📡 The call couldn't connect — that's a network thing (UDP/WebRTC blocked, VPN, or firewall). Try again, or try off VPN.");
+        stopRealtime();}
+      else if(["disconnected","closed"].includes(pc.connectionState)&&rtcLive)stopRealtime();};
+    const offer=await pc.createOffer();await pc.setLocalDescription(offer);
+    const resp=await fetch("https://api.openai.com/v1/realtime/calls?model="+encodeURIComponent(s.model),{
+      method:"POST",body:offer.sdp,
+      headers:{Authorization:"Bearer "+s.value,"Content-Type":"application/sdp"}});
+    if(!resp.ok){throw new Error("OpenAI rejected the call (HTTP "+resp.status+")");}
+    await pc.setRemoteDescription({type:"answer",sdp:await resp.text()});
+    rtcLive=true;setBody();
+    $("#liveBtn").classList.add("armed");$("#liveBtn").textContent="📡 END CALL";
+    tx("TARS","📡 Live.");
+  }catch(e){tx("TARS","Live voice failed: "+e.message);stopRealtime();}
+}
+function stopRealtime(){
+  const was=rtcLive;rtcLive=false;
+  try{if(rtcPC)rtcPC.close();}catch(e){}
+  try{if(rtcStream)rtcStream.getTracks().forEach(t=>t.stop());}catch(e){}
+  try{if(rtcAudioEl){rtcAudioEl.srcObject=null;rtcAudioEl.remove();}}catch(e){}
+  rtcPC=null;rtcStream=null;rtcAudioEl=null;rtcDC=null;rtcBusy=false;rtcHandled.clear();analyser=null;
+  $("#liveBtn").classList.remove("armed");$("#liveBtn").textContent="📡 LIVE";
+  setBody();
+  if(was){liveHear("Call ended.",false);tx("TARS","📡 Hung up.");}
+}
+
+/* ---------------- boot ---------------- */
+(async()=>{
+  try{const r=await fetch("/api/status");const s=await r.json();
+    $("#dotBrain").className="dot "+(s.brain?"on":"err");
+    $("#dotVoice").className="dot "+(s.voice?"on":"");
+    $("#dotCli").className="dot "+(s.claude_cli?"on":"err");
+    $("#dotHue").className="dot "+(s.hue==="ready"?"on":"");
+    if(s.voice_name)curVoice=s.voice_name;
+    if(s.trust)trust=s.trust;
+    if(s.takeover_speed)takeoverSpeed=s.takeover_speed;
+    if(s.pending)showPending("(queued before reload — open the transcript for details)");
+    if(s.realtime){                       // GPT Realtime — true live WebRTC voice
+      $("#liveBtn").style.display="";
+      $("#liveBtn").title="live real-time voice call with TARS (GPT Realtime, "+(s.realtime_voice||"voice")+")";
+      $("#liveBtn").onclick=startRealtime;
+    }else if(s.duplex&&s.duplex.agent_id){ // ElevenLabs Agents fallback
+      $("#liveBtn").style.display="";
+      $("#liveBtn").onclick=()=>{
+        if(document.querySelector("elevenlabs-convai"))return;
+        const el=document.createElement("elevenlabs-convai");
+        el.setAttribute("agent-id",s.duplex.agent_id);
+        document.body.appendChild(el);
+        const sc=document.createElement("script");
+        sc.src="https://unpkg.com/@elevenlabs/convai-widget-embed";
+        sc.async=true;document.body.appendChild(sc);
+        $("#liveBtn").classList.add("armed");
+      };
+    }else{
+      $("#liveBtn").style.display="";
+      $("#liveBtn").onclick=()=>tx("TARS","Live voice needs an OpenAI key — add openai.api_key to config.json (or it borrows the Jarvis one). See DUPLEX.md.");
+    }
+  }catch(e){}
+  const d=await fetch("/api/dials").then(r=>r.json()).catch(()=>null);
+  if(d){$("#humor").value=d.humor;$("#honesty").value=d.honesty;if(d.trust)trust=d.trust;}
+  const mj=await fetch("/api/models").then(r=>r.json()).catch(()=>({models:[],current:""}));
+  curModel=mj.current||"";
+  buildSettings(mj.models);
+  paintDial("humor");paintDial("honesty");
+  tarsLine(`TARS ONLINE · HUMOR ${$("#humor").value}% · HONESTY ${$("#honesty").value}%`,true);
+  tx("TARS","Crew's assembled. Ask me anything, deploy real work, or tell me to build you an app. Hands-free is up top if you'd rather talk. Full manual: hit TOUR.");
+  try{if(!localStorage.getItem("tars_tour_done"))
+    tx("TARS",'First time here? Ask me "what can you do?" — or hit TOUR up top — and I\'ll walk you through everything myself.');}catch(e){}
+  poll();
+})();
+</script>
+</body>
+</html>

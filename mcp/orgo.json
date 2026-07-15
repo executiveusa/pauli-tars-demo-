@@ -1,0 +1,19 @@
+{
+  "orgo_mcp": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "github:nickvasilescu/orgo-mcp"
+    ],
+    "env": {
+      "ORGO_API_KEY": "${ORGO_API_KEY}",
+      "ORGO_READ_ONLY": "false",
+      "ORGO_TOOLSETS": "core,admin,screen,shell,files"
+    }
+  },
+  "doctor": "Ask agent to call orgo_doctor after MCP attach",
+  "safety": {
+    "ORGO_READ_ONLY": "false",
+    "ORGO_TOOLSETS": "core,admin,screen,shell,files"
+  }
+}

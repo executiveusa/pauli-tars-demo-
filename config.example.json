@@ -1,0 +1,39 @@
+{
+  "_comment": "COPY THIS FILE to config.json and add your keys. Only the Anthropic key is REQUIRED — it powers TARS's brain (chat + mission debriefs). Everything else is optional and unlocks extra powers. Never paste keys in chat.",
+  "model": {
+    "api_key": "sk-ant-...",
+    "model": "claude-opus-4-8",
+    "_comment": "REQUIRED. Get a key at console.anthropic.com. Opus 4.8 = best personality; claude-sonnet-5 = cheaper."
+  },
+  "elevenlabs": {
+    "api_key": "",
+    "voice_id": "CwhRBWXzGAHq8TQ4Fs17",
+    "_voice": "OPTIONAL premium voice. Without a key TARS speaks with your browser's free built-in voice. Default voice: Roger (deadpan American male) — or pick any voice from your ElevenLabs library.",
+    "model_id": "eleven_turbo_v2_5",
+    "model_id_expressive": "eleven_v3",
+    "_expressive": "Used automatically when TARS's line contains [sighs]-style audio tags (humor >= 75). Falls back to model_id if unavailable.",
+    "agent_id": "",
+    "voice_settings": { "stability": 0.7, "similarity_boost": 0.8, "style": 0.2 }
+  },
+  "openai": {
+    "api_key": "",
+    "realtime_model": "gpt-realtime",
+    "realtime_voice": "cedar",
+    "_comment": "OPTIONAL but recommended — powers the 📡 LIVE call (real-time voice conversation with screen sharing, ~300ms latency) and high-accuracy dictation. Get a key at platform.openai.com."
+  },
+  "takeover": {
+    "speed": "balanced",
+    "_comment": "TAKEOVER mode brains: fast (Haiku — quickest) / balanced (Sonnet — recommended) / smart (Opus — most careful). Also switchable in ⚙ SETTINGS."
+  },
+  "hue": {
+    "_comment": "OPTIONAL Philips Hue — room glows amber when TARS speaks, red flash on failed jobs. {\"bridge_ip\": \"192.168.x.x\", \"app_key\": \"...\", \"lights\": [\"1\",\"2\"]}",
+    "bridge_ip": "",
+    "app_key": "",
+    "lights": []
+  },
+  "picovoice": {
+    "_comment": "OPTIONAL trained 'Hey TARS' wake word (scaffold — see DUPLEX.md bottom). Free key at console.picovoice.ai; train a Porcupine keyword, export Web WASM (.ppn) into static/.",
+    "access_key": "",
+    "keyword_file": ""
+  }
+}
