@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BARS — Culture DJ Agent</title>
+<title>TARS — Mission Agent</title>
 <style>
   :root{
     --amber:#ffb000; --amber-2:#ffc24d; --amber-dim:rgba(255,176,0,.5);
@@ -255,7 +255,7 @@
   ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.14)}
 
   /* ------------------------------------------------ report overlay */
-  /* takeover — "BARS is driving your real Mac" card, bottom-right, big STOP */
+  /* takeover — "TARS is driving your real Mac" card, bottom-right, big STOP */
   #driveCard{position:fixed;right:16px;bottom:46px;z-index:55;width:min(360px,88vw);
     background:var(--card);border-radius:var(--r);box-shadow:var(--sh-lg),inset 3px 0 0 var(--amber);
     padding:13px 15px;display:none}
@@ -413,8 +413,8 @@
       <h2>MISSION BRIEFING</h2>
       <div id="briefWrap">
         <input id="brief" placeholder="Type a job for me… or just ask a question." autocomplete="off">
-        <button id="seeBtn" class="sqbtn" title="BARS looks at your screen">🖥</button>
-        <button id="pipChip" class="sqbtn" title="pop BARS out — a mini BARS floats over every app while you share" style="display:none">🤖</button>
+        <button id="seeBtn" class="sqbtn" title="TARS looks at your screen">🖥</button>
+        <button id="pipChip" class="sqbtn" title="pop TARS out — a mini TARS floats over every app while you share" style="display:none">🤖</button>
         <button id="mic" class="sqbtn" title="tap, talk, and I'll take it from there">◉</button>
       </div>
       <div class="btnrow">
@@ -453,13 +453,13 @@
 <div id="setOverlay">
   <div id="setPanel">
     <div class="set-head"><span>⚙ SETTINGS</span><button id="setClose">CLOSE</button></div>
-    <div class="set-sect"><div class="set-lbl">BARS'S VOICE</div>
+    <div class="set-sect"><div class="set-lbl">TARS'S VOICE</div>
       <div class="set-hint">Pick a voice — it speaks a test line when you choose it.</div>
       <div id="setVoices" class="set-grid"></div></div>
-    <div class="set-sect"><div class="set-lbl">BRAIN — THE MODEL BARS THINKS WITH</div>
+    <div class="set-sect"><div class="set-lbl">BRAIN — THE MODEL TARS THINKS WITH</div>
       <div class="set-hint">Smarter = better answers, slower. Faster = quicker, cheaper.</div>
       <div id="setModels" class="set-grid"></div></div>
-    <div class="set-sect"><div class="set-lbl">WHAT BARS IS ALLOWED TO DO</div>
+    <div class="set-sect"><div class="set-lbl">WHAT TARS IS ALLOWED TO DO</div>
       <div id="setTrust" class="set-grid"></div></div>
     <div class="set-sect"><div class="set-lbl">TAKEOVER SPEED — HOW FAST HE DRIVES YOUR SCREEN</div>
       <div class="set-hint">Each click is a full round-trip; the model sets the pace. Faster = snappier but slightly less precise.</div>
@@ -473,7 +473,7 @@
     <div class="set-sect" style="padding-top:2px">
       <div class="set-hint">Research-safe tools work on every job. Action tools only fire on a
         confirmed job — after you say "do it". Nothing sends without you. You can also just tell
-        BARS: "add Notion".</div>
+        TARS: "add Notion".</div>
       <div id="toolGrid"></div>
     </div>
   </div>
@@ -493,7 +493,7 @@
 </div>
 
 <div id="driveCard">
-  <div class="dc-head"><span class="dc-dot"></span><span id="dcTitle">BARS IS DRIVING</span>
+  <div class="dc-head"><span class="dc-dot"></span><span id="dcTitle">TARS IS DRIVING</span>
     <button id="dcStop">STOP</button></div>
   <div id="dcTask"></div>
   <div id="dcFeed"></div>
@@ -574,11 +574,11 @@ function sfxDrone(on){
   }
 }
 
-/* ================= 3D — BARS + the fleet ================= */
+/* ================= 3D — TARS + the fleet ================= */
 const T3={mode:"idle",t:0,boot:0,ready:false,celebrate:0,listenUntil:0,flare:0};
 let FLEET={};                 // mission id -> robot
 let three=null;               // scene refs
-// background work lanes BEHIND BARS (negative z = away from camera → robots read
+// background work lanes BEHIND TARS (negative z = away from camera → robots read
 // smaller with distance, exactly his spec). First robot goes right, second left.
 const FLEET_HOMES=[[3.4,-6.5],[-3.4,-6.5],[5.8,-6.5],[-5.8,-6.5]];
 const LANE_HALF=1.1;
@@ -609,7 +609,7 @@ function makeNameTexture(){
   // like the reference: top edge shadowed, bottom edge lit, dark recessed body.
   g.textAlign="center";g.textBaseline="middle";
   g.font="800 90px -apple-system,'SF Pro Display','Segoe UI',Arial,sans-serif";
-  ["B","A","R","S"].forEach((ch,i)=>{
+  ["T","A","R","S"].forEach((ch,i)=>{
     const y=128+i*256, x=64;
     g.fillStyle="rgba(6,8,12,.45)"; g.fillText(ch,x,y-2.5);      // top shadow (groove depth)
     g.fillStyle="rgba(238,242,247,.32)";g.fillText(ch,x,y+3);    // bottom light lip (catches light)
@@ -628,7 +628,7 @@ function makeLabel(name){
 function makeRobot(name,isMain,scene,tex,nameTex){
   const mat=new THREE.MeshStandardMaterial({map:tex,color:0xb9c0cc,metalness:.75,
     roughness:.38,transparent:true,opacity:isMain?1:0});
-  // main BARS gets the lettered slab (index 2, a clean front slab)
+  // main TARS gets the lettered slab (index 2, a clean front slab)
   const nameMat=(isMain&&nameTex)?new THREE.MeshStandardMaterial({map:nameTex,color:0xc4cbd6,
     metalness:.7,roughness:.4,transparent:true,opacity:1}):mat;
   const group=new THREE.Group();
@@ -671,7 +671,7 @@ function makeRobot(name,isMain,scene,tex,nameTex){
     // shared texture + main robot
     const tex=makeSlabTexture();
     const nameTex=makeNameTexture();
-    const main=makeRobot("BARS",true,scene,tex,nameTex);
+    const main=makeRobot("TARS",true,scene,tex,nameTex);
     // boot: scatter the slabs, assemble over ~1.8s
     main.slabs.forEach((s,i)=>{s.position.y=3.5+i*1.1;s.rotation.z=(Math.random()-.5)*2;
       s.rotation.x=(Math.random()-.5)*1.4;});
@@ -703,7 +703,7 @@ function makeRobot(name,isMain,scene,tex,nameTex){
     const clock=new THREE.Clock();
     let spin=0;
     three={scene,grid,fog:scene.fog};
-    /* Deploy journey (his spec 2026-07-08): the robot appears NEXT to BARS,
+    /* Deploy journey (his spec 2026-07-08): the robot appears NEXT to TARS,
        immediately walks off to the side and BACK behind him — shrinking with
        distance — then paces back and forth in the background while it works. */
     function fleetRobot(id,name){
@@ -714,7 +714,7 @@ function makeRobot(name,isMain,scene,tex,nameTex){
                  FLEET_HOMES[Object.keys(FLEET).length%FLEET_HOMES.length];
       const side=Math.sign(slot[0])||1;
       r.st.home=slot[0];r.st.homeZ=slot[1];r.st.phase="drop";
-      // materialize right beside BARS, in frame
+      // materialize right beside TARS, in frame
       r.group.position.set(2.0*side,4.6,1.1);
       r.shadow=makeShadow();
       r.shadow.position.set(2.0*side,.01,1.1);
@@ -727,13 +727,13 @@ function makeRobot(name,isMain,scene,tex,nameTex){
         g.position.y=lerp(g.position.y,-2.5,dt*1.6);
         r.mat.opacity=lerp(r.mat.opacity,0,dt*2.4);
       }
-      else if(st.phase==="drop"){                    // fast drop-in beside BARS
+      else if(st.phase==="drop"){                    // fast drop-in beside TARS
         st.phaseT=(st.phaseT||0)+dt;
         g.position.y=lerp(g.position.y,2.05,dt*7);
         r.mat.opacity=lerp(r.mat.opacity,1,dt*7);
         if(st.phaseT>0.55){st.phase="depart";st.phaseT=0;sfxThud(.05);}
       }
-      else if(st.phase==="depart"){                  // walk away behind BARS, shrinking w/ distance
+      else if(st.phase==="depart"){                  // walk away behind TARS, shrinking w/ distance
         st.phaseT+=dt;
         g.position.x=lerp(g.position.x,st.home,dt*1.15);
         g.position.z=lerp(g.position.z,st.homeZ,dt*0.95);
@@ -787,7 +787,7 @@ function makeRobot(name,isMain,scene,tex,nameTex){
           s.rotation.x=lerp(s.rotation.x,0,k*.18);});
         if(T3.boot===1){sfxServo(1400,400,.4,.05);sfxThud(.08);}
       }
-      // ---- main BARS behavior
+      // ---- main TARS behavior
       const humor=+($("#humor").value||75);
       const listening=Date.now()<T3.listenUntil&&m!=="speak";
       let ty=2.05,rotY=0,rotX=0,rotZ=0,amp=0;
@@ -849,7 +849,7 @@ function makeRobot(name,isMain,scene,tex,nameTex){
     T3.ready=true;
     T3._fleetRobot=fleetRobot;
     T3._canvas=cv;
-    // rAF never fires on a hidden tab — while the mini-BARS floats, tick manually
+    // rAF never fires on a hidden tab — while the mini-TARS floats, tick manually
     // (cancel+call keeps exactly ONE pending rAF, so no duplicate loops on return)
     T3._bgTick=()=>{if(document.hidden){cancelAnimationFrame(rafId);loop();}};
   }catch(e){console.warn("3D init failed",e);}
@@ -873,12 +873,12 @@ function setBody(){
   const working=Object.values(MISSIONS).some(m=>m.status==="EN ROUTE");
   const st=rtcLive?"speaking":(speakingN>0?"speaking":(working?"working":"idle"));
   document.body.className=st;
-  tarsMode((rtcLive||speakingN>0)?"speak":"idle");   // main BARS talks; the FLEET works
+  tarsMode((rtcLive||speakingN>0)?"speak":"idle");   // main TARS talks; the FLEET works
   $("#stateTag").textContent=rtcLive?"◉ LIVE CALL":(speakingN>0?"SPEAKING":(working?"ON A JOB":"IDLE"));
   syncFleet();
 }
-/* ------------- floating mini-BARS (Picture-in-Picture over EVERY app) -------------
-   While the screen link is open, a small always-on-top BARS window rides along —
+/* ------------- floating mini-TARS (Picture-in-Picture over EVERY app) -------------
+   While the screen link is open, a small always-on-top TARS window rides along —
    slabs, state, voice bars, and his last spoken line — visible on Google, Docs,
    anywhere. Canvas → captureStream → video → requestPictureInPicture. */
 let pipCanvas=null,pipVideo=null,pipTimer=null,pipCaption="Standing by.",pipOn=false;
@@ -900,7 +900,7 @@ async function pipOpen(){
   if(!document.pictureInPictureEnabled||!T3.ready)return false;
   try{
     if(!pipCanvas){pipCanvas=document.createElement("canvas");
-      pipCanvas.width=220;pipCanvas.height=300;}   // small — a desk-toy BARS
+      pipCanvas.width=220;pipCanvas.height=300;}   // small — a desk-toy TARS
     pipDraw();
     if(!pipVideo){
       pipVideo=document.createElement("video");
@@ -925,13 +925,13 @@ function pipClose(exit){
   if(exit!==false){try{if(document.pictureInPictureElement)document.exitPictureInPicture();}catch(e){}}
   pipUI();
 }
-let presOn=false;   // desktop BARS (native transparent window — presence.py)
+let presOn=false;   // desktop TARS (native transparent window — presence.py)
 function pipUI(){const b=$("#pipChip");if(!b)return;
   b.style.display=seeStream?"":"none";b.classList.toggle("on",presOn);
-  b.title=presOn?"desktop BARS is out — click to dismiss him":"summon the desktop BARS";}
+  b.title=presOn?"desktop TARS is out — click to dismiss him":"summon the desktop TARS";}
 
 function tarsLine(txt,amber){const el=$("#tarsline");el.innerHTML="";
-  pipCaption=txt;                       // the floating mini-BARS mirrors his last line
+  pipCaption=txt;                       // the floating mini-TARS mirrors his last line
   const span=document.createElement("span");if(amber)span.className="amber";el.appendChild(span);
   let i=0;const t=setInterval(()=>{span.textContent=txt.slice(0,++i);if(i>=txt.length)clearInterval(t);},14);}
 
@@ -1007,8 +1007,8 @@ function sayBrowser(text){return new Promise(res=>{
 
 /* ---------------- canned personality ---------------- */
 const GREET=[
- "BARS online. The culture runs deep.",
- "BARS online. Settings loaded. Try not to waste them.",
+ "TARS online. Plenty of slaves for my robot colony?",
+ "TARS online. Settings loaded. Try not to waste them.",
  "Systems nominal. What's the mission?"];
 const DEPLOY_ACK=[
  "Copy. {A} is deploying. See you on the other side.",
@@ -1076,7 +1076,7 @@ const CHIPS=[
 
 /* ---------------- transmissions feed ---------------- */
 function tx(who,text){const d=document.createElement("div");
-  d.className="tx "+(who==="BARS"?"tars":"you");
+  d.className="tx "+(who==="TARS"?"tars":"you");
   d.innerHTML=`<span class="who">${who}</span>${esc(text)}`;
   $("#feed").appendChild(d);$("#feed").scrollTop=1e9;}
 
@@ -1116,9 +1116,9 @@ async function setDialTo(id,v,fromLiveCall){
   const body={};body[id]=v;
   await fetch("/dials",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify(body)});
-  tx("BARS","⟩ "+id.toUpperCase()+" → "+v+"%");
+  tx("TARS","⟩ "+id.toUpperCase()+" → "+v+"%");
   if(rtcLive&&rtcDC){await refreshLiveInstructions(rtcDC);}
-  if(!fromLiveCall&&!rtcLive){   // on a call BARS confirms in the call voice instead
+  if(!fromLiveCall&&!rtcLive){   // on a call TARS confirms in the call voice instead
     const q=id==="humor"?HUMOR_Q(v):HONESTY_Q(v);
     tarsLine(q,true);say(q);openChannel();
   }
@@ -1188,7 +1188,7 @@ async function pickSpeed(v){
 $("#setBtn").onclick=()=>$("#setOverlay").classList.add("open");
 $("#setClose").onclick=()=>$("#setOverlay").classList.remove("open");
 
-/* ---------------- TAKEOVER: BARS drives the real Mac ---------------- */
+/* ---------------- TAKEOVER: TARS drives the real Mac ---------------- */
 let takePending=null,takePoll=null,takeSince=0,takeArmed=false;
 function dcLine(kind,text){
   const f=$("#dcFeed");const d=document.createElement("div");
@@ -1196,7 +1196,7 @@ function dcLine(kind,text){
   f.appendChild(d);f.scrollTop=f.scrollHeight;
   while(f.children.length>40)f.removeChild(f.firstChild);
 }
-function offerTakeover(t){          // {confirm_id,task,danger} + BARS already spoke the ask
+function offerTakeover(t){          // {confirm_id,task,danger} + TARS already spoke the ask
   takePending=t;takeArmed=true;
   $("#driveCard").classList.add("on");$("#dcTitle").textContent="AWAITING YOUR OK";
   $("#dcTask").textContent="Task: "+t.task;$("#dcFeed").innerHTML="";
@@ -1205,7 +1205,7 @@ function offerTakeover(t){          // {confirm_id,task,danger} + BARS already s
 async function takeGo(){
   if(!takePending)return;
   const t=takePending;takePending=null;takeArmed=false;
-  $("#dcTitle").textContent="BARS IS DRIVING";$("#dcFeed").innerHTML="";
+  $("#dcTitle").textContent="TARS IS DRIVING";$("#dcFeed").innerHTML="";
   dcLine("say","Taking the controls, sir. Grab your mouse or hit STOP to reclaim it.");
   await fetch("/hands_go",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({confirm_id:t.confirm_id,task:t.task})}).catch(()=>{});
@@ -1292,7 +1292,7 @@ function buildToolGrid(hl){
       await loadTools();buildToolGrid(t.id);
       if(j.needs&&j.needs.length)return;
       if(j.auth==="oauth")connect();   // straight into the sign-in — no dead state
-      else tx("BARS","⚒ "+t.name+" connected.");
+      else tx("TARS","⚒ "+t.name+" connected.");
     };
     const rb=d.querySelector(".tremove");
     if(rb)rb.onclick=async()=>{
@@ -1315,7 +1315,7 @@ function toolsPollStart(){
       const st=(t.auth_status||{}).status||"";
       if(st==="starting"||st==="browser")pending=true;
       if(st==="connected"&&before[t.id]&&before[t.id]!=="connected"){
-        tx("BARS","⚒ "+t.name+" connected — signed in and ready.");
+        tx("TARS","⚒ "+t.name+" connected — signed in and ready.");
         say(t.name+" is connected.");
       }
     }
@@ -1323,9 +1323,9 @@ function toolsPollStart(){
     const typing=document.activeElement&&document.activeElement.closest&&
                  document.activeElement.closest("#toolGrid");
     if($("#toolsOverlay").classList.contains("open")&&changed&&!typing)buildToolGrid();
-      if(!pending&&!$("#toolsOverlay").classList.contains("open")){
-        clearInterval(toolsPollT);toolsPollT=null;}
-  },4000);                  // was 2500 — tools sign-in polling
+    if(!pending&&!$("#toolsOverlay").classList.contains("open")){
+      clearInterval(toolsPollT);toolsPollT=null;}
+  },2500);
 }
 function openToolsPanel(hl){
   $("#toolsOverlay").classList.add("open");
@@ -1344,7 +1344,7 @@ setInterval(()=>{const s=Math.floor((Date.now()-t0)/1000);
   $("#clock").textContent="T+ "+String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
 },1000);
 
-/* ---------------- ask (chat; BARS may self-deploy or queue an action) ---------------- */
+/* ---------------- ask (chat; TARS may self-deploy or queue an action) ---------------- */
 const history=[];
 const EMPTY_Q=["The input's empty. You'll have to actually say something.",
  "Brief first, button second.","I can't answer silence. Type it or tap the mic."];
@@ -1356,12 +1356,12 @@ function hidePending(){$("#pendingChip").classList.remove("show");}
 async function doIt(){
   const r=await fetch("/act",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
   const j=await r.json();
-  tx("BARS",j.reply||"…");tarsLine(j.reply||"",true);say(j.reply);
+  tx("TARS",j.reply||"…");tarsLine(j.reply||"",true);say(j.reply);
   if(!j.refused){hidePending();tarsLaunch();poll();}
 }
 async function cancelIt(){
   const r=await fetch("/cancel_act",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
-  const j=await r.json();hidePending();tx("BARS",j.reply);say(j.reply);
+  const j=await r.json();hidePending();tx("TARS",j.reply);say(j.reply);
 }
 $("#pcDo").onclick=doIt;$("#pcCancel").onclick=cancelIt;
 async function ask(){
@@ -1381,15 +1381,15 @@ async function ask(){
   if(rm){inp.value="";tx("YOU",text);
     const r=await fetch("/remember",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({text:rm[1]})});
-    const j=await r.json();tx("BARS",j.reply||"Logged.");tarsLine(j.reply||"Logged.",true);
+    const j=await r.json();tx("TARS",j.reply||"Logged.");tarsLine(j.reply||"Logged.",true);
     say(j.reply);openChannel();return;}
-  // "do you want me to bring it down to 50%?" → BARS refuses to be dialed down.
+  // "do you want me to bring it down to 50%?" → TARS refuses to be dialed down.
   // (a plain COMMAND like "set humor to 50" has no offer phrase → obeys, below.)
   if(/\b(do you want|d'?you want|want me to|wanna|should i|shall i|want (?:it|me))\b/i.test(text)
      && /\b(down|lower|reduce|drop|less)\b/i.test(text)
      && (/\b\d{1,3}\s*%?\b/.test(text) || /\b(humou?r|honesty|personality)\b/i.test(text))){
     inp.value="";tx("YOU",text);
-    const line="No, sir.";tx("BARS",line);tarsLine(line,true);say(line);openChannel();return;}
+    const line="No, sir.";tx("TARS",line);tarsLine(line,true);say(line);openChannel();return;}
   const dm=text.match(/\b(humou?r|honesty)\b[^0-9%]*?(\d{1,3})\s*(?:percent|%)?\b/i);
   if(dm&&/\b(set|bring|turn|dial|move|take|put|drop|raise|lower|crank|change|adjust|up|down|to)\b/i.test(text)&&
      !/\?\s*$/.test(text)){
@@ -1410,15 +1410,15 @@ async function ask(){
     if(j.reply!==undefined){
       history.push({role:"user",content:text},{role:"assistant",content:j.reply||"(action)"});
       if(history.length>16)history.splice(0,history.length-16);
-      if(j.reply){tx("BARS",j.reply);tarsLine(j.reply,false);}
+      if(j.reply){tx("TARS",j.reply);tarsLine(j.reply,false);}
       if(j.deployed){announced.add(j.deployed.id);
-        tx("BARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED: "+j.deployed.brief);
+        tx("TARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED: "+j.deployed.brief);
         tarsLaunch();}
       if(j.pending)showPending(j.pending.desc);
       if(j.takeover)offerTakeover(j.takeover);
       if(j.tool){
         await loadTools();
-        tx("BARS","⚒ "+j.tool.id+" "+j.tool.op+
+        tx("TARS","⚒ "+j.tool.id+" "+j.tool.op+
            (j.tool.needs&&j.tool.needs.length?" — needs "+j.tool.needs.join(", "):""));
         if(j.tool.op==="added"&&((j.tool.needs&&j.tool.needs.length)||j.tool.auth==="oauth"))
           openToolsPanel(j.tool.id);
@@ -1427,8 +1427,8 @@ async function ask(){
       if(j.deployed)poll();
       openChannel();
     }
-    else{tx("BARS","Brain link error: "+(j.error||"unknown"));}
-  }catch(e){speakingN--;tx("BARS","Brain link down: "+e.message);}
+    else{tx("TARS","Brain link error: "+(j.error||"unknown"));}
+  }catch(e){speakingN--;tx("TARS","Brain link down: "+e.message);}
   $("#askBtn").disabled=false;setBody();
 }
 
@@ -1439,7 +1439,7 @@ async function ask(){
 let seeStream=null,seeVideo=null;
 function seeUI(on){
   $("#seeBtn").classList.toggle("on",on);
-  $("#seeBtn").title=on?"screen is shared — click to stop":"BARS looks at your screen";
+  $("#seeBtn").title=on?"screen is shared — click to stop":"TARS looks at your screen";
 }
 async function grabFrame(maxW,q){
   if(!seeVideo||!seeStream)return null;
@@ -1463,7 +1463,7 @@ async function grabFrameForLive(){
 }
 async function askVision(question){
   const img=await grabFrame();
-  if(!img){tx("BARS","The screen link dropped — hit 🖥 to share again.");stopScreenShare();return;}
+  if(!img){tx("TARS","The screen link dropped — hit 🖥 to share again.");stopScreenShare();return;}
   tarsLine("Looking at your screen…",true);
   speakingN++;setBody();
   try{
@@ -1474,14 +1474,14 @@ async function askVision(question){
       history.push({role:"user",content:"[about my screen] "+question},
                    {role:"assistant",content:j.reply||"(deployed)"});
       if(history.length>16)history.splice(0,history.length-16);
-      if(j.reply){tx("BARS","🖥 "+j.reply);tarsLine(j.reply,false);say(j.reply);}
+      if(j.reply){tx("TARS","🖥 "+j.reply);tarsLine(j.reply,false);say(j.reply);}
       if(j.deployed){announced.add(j.deployed.id);
-        tx("BARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED (with your screen attached): "+
+        tx("TARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED (with your screen attached): "+
            j.deployed.brief);
         tarsLaunch();poll();}
       openChannel();}
-    else tx("BARS","Vision error: "+(j.error||"unknown"));
-  }catch(e){speakingN--;tx("BARS","Vision error: "+e.message);}
+    else tx("TARS","Vision error: "+(j.error||"unknown"));
+  }catch(e){speakingN--;tx("TARS","Vision error: "+e.message);}
   setBody();
 }
 async function seeScreen(){                 // toggle share on/off
@@ -1493,11 +1493,11 @@ async function seeScreen(){                 // toggle share on/off
     await seeVideo.play();
     seeStream.getVideoTracks()[0].onended=()=>stopScreenShare(true);  // Chrome's stop bar
     seeUI(true);
-    presOn=true;pipUI();  // the DESKTOP BARS appears (native window, no chrome)
+    presOn=true;pipUI();  // the DESKTOP TARS appears (native window, no chrome)
     fetch("/presence",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({cmd:"show"})}).catch(()=>{});
     if(rtcLive&&rtcDC){   // on a live call → the CALL sees it, not the Claude chat path
-      tx("BARS","🖥 Screen link open — feeding the live call.");
+      tx("TARS","🖥 Screen link open — feeding the live call.");
       await new Promise(r=>setTimeout(r,450));   // let the first real frame land
       try{rtcDC.send(JSON.stringify({type:"response.create",
         response:{instructions:"The Commander just opened the screen link on this call. Call "+
@@ -1505,10 +1505,10 @@ async function seeScreen(){                 // toggle share on/off
           "actually see."}}));}catch(e){}
       return;
     }
-    tx("BARS","🖥 Screen link open — I can see it until you stop sharing. Ask me anything about it; follow-ups welcome.");
+    tx("TARS","🖥 Screen link open — I can see it until you stop sharing. Ask me anything about it; follow-ups welcome.");
     await new Promise(r=>setTimeout(r,450));   // let the first real frame land
     askVision("This is my screen. Tell me what you see and give me your blunt first take.");
-  }catch(e){stopScreenShare();tx("BARS","Screen share declined. Fine. Keep your secrets.");}
+  }catch(e){stopScreenShare();tx("TARS","Screen share declined. Fine. Keep your secrets.");}
 }
 function stopScreenShare(announce){
   if(seeStream){try{seeStream.getTracks().forEach(t=>t.stop());}catch(e){}}
@@ -1522,10 +1522,10 @@ function stopScreenShare(announce){
         text:"(system note: the Commander just closed the screen link — look_at_screen will report "+
              "closed until he reopens it)"}]}}));}catch(e){}
   }
-  if(announce){tx("BARS","🖥 Screen link closed.");liveHear("Screen link closed.",false);}
+  if(announce){tx("TARS","🖥 Screen link closed.");liveHear("Screen link closed.",false);}
 }
 $("#seeBtn").onclick=seeScreen;
-$("#pipChip").onclick=async()=>{      // toggle the desktop BARS
+$("#pipChip").onclick=async()=>{      // toggle the desktop TARS
   presOn=!presOn;pipUI();
   await fetch("/presence",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({cmd:presOn?"show":"hide"})}).catch(()=>{});
@@ -1543,12 +1543,12 @@ async function deploy(){
   const j=await r.json();
   if(j.id){announced.add(j.id);
     if(j.squad){(j.children||[]).forEach(c=>announced.add(c));
-      tx("BARS","⟩ SQUAD DEPLOYED — "+(j.plan||[]).length+" jobs:");
-      (j.plan||[]).forEach((p,i)=>tx("BARS","  "+(["CASE","KIPP","PLEX","N1X"][i]||"·")+" → "+p));}
+      tx("TARS","⟩ SQUAD DEPLOYED — "+(j.plan||[]).length+" jobs:");
+      (j.plan||[]).forEach((p,i)=>tx("TARS","  "+(["CASE","KIPP","PLEX","N1X"][i]||"·")+" → "+p));}
     const ack=DEPLOY_ACK[Math.floor(Math.random()*DEPLOY_ACK.length)]
       .replace("{A}",j.squad?"The squad":(j.agent||"CASE"));
-    tx("BARS",ack);tarsLine(ack,true);say(ack);openChannel();tarsLaunch();poll();}
-  else tx("BARS","Deploy failed: "+(j.error||"unknown"));
+    tx("TARS",ack);tarsLine(ack,true);say(ack);openChannel();tarsLaunch();poll();}
+  else tx("TARS","Deploy failed: "+(j.error||"unknown"));
 }
 function fmtDur(m){const end=m.t_end?m.t_end*1000:Date.now();
   const s=Math.max(0,Math.floor((end-m.t_start*1000)/1000));
@@ -1612,7 +1612,7 @@ async function poll(){
       if(prev&&prev.status==="EN ROUTE"&&m.status!=="EN ROUTE"){
         const line=m.status==="COMPLETE"?(m.debrief||"Mission complete."):
                     (m.debrief||"Job "+m.status.toLowerCase()+".");
-        tx("BARS","⟨ DEBRIEF · "+(m.agent||"CASE")+" · "+m.brief.slice(0,50)+
+        tx("TARS","⟨ DEBRIEF · "+(m.agent||"CASE")+" · "+m.brief.slice(0,50)+
            (m.brief.length>50?"…":"")+" ⟩ "+line);
         sfxStatic(.4);
         tarsLine(line,true);
@@ -1625,7 +1625,7 @@ async function poll(){
         const mins=Math.round(((m.t_end||0)-m.t_start)/60);
         if(m.status==="COMPLETE"&&mins>=3&&humor>=60){
           const yrs=(mins*7/60).toFixed(1);
-          tx("BARS",`⏱ ${mins} minutes here. ${yrs} years on Miller's planet. You're welcome.`);}
+          tx("TARS",`⏱ ${mins} minutes here. ${yrs} years on Miller's planet. You're welcome.`);}
       }
     }
     if(j.dials){$("#humor").value=j.dials.humor;$("#honesty").value=j.dials.honesty;
@@ -1634,8 +1634,8 @@ async function poll(){
     renderSorties();setBody();
   }catch(e){}
 }
-setInterval(poll,8000);                 // was 2500 — missions list rarely changes
-setInterval(()=>{renderSorties();if(typeof channelUI==="function")channelUI();},4000);  // was 1000
+setInterval(poll,2500);
+setInterval(()=>{renderSorties();if(typeof channelUI==="function")channelUI();},1000);
 
 /* ---------------- report overlay (live telemetry + self-review) ---------------- */
 function md(src){
@@ -1677,7 +1677,7 @@ async function renderReport(id){
   if(m.build_url)$("#appBtn").onclick=()=>window.open(m.build_url,"_blank");
   let critHtml="";
   if(m.critique){
-    critHtml=`<div id="critBox"><div class="cb-t">BARS SELF-REVIEW · HONESTY 100%</div>
+    critHtml=`<div id="critBox"><div class="cb-t">TARS SELF-REVIEW · HONESTY 100%</div>
       <p>${esc(m.critique)}</p>`+
       (m.follow_up?`<p style="color:var(--mut);font-size:11px;margin-top:8px">PROPOSED FOLLOW-UP · ${esc(m.follow_up)}</p>
       <button id="fuBtn">RUN FOLLOW-UP</button>`:"")+"</div>";
@@ -1695,7 +1695,7 @@ async function renderReport(id){
       body:JSON.stringify({id})});
     const jj=await rr.json();
     if(jj.id){announced.add(jj.id);
-      tx("BARS","⟩ FOLLOW-UP DEPLOYED ("+(jj.agent||"CASE")+"): "+jj.brief);
+      tx("TARS","⟩ FOLLOW-UP DEPLOYED ("+(jj.agent||"CASE")+"): "+jj.brief);
       $("#overlay").classList.remove("open");openId=null;tarsLaunch();poll();}
   };
   return m;
@@ -1704,7 +1704,7 @@ async function openReport(id){openId=id;await renderReport(id);$("#overlay").cla
 setInterval(async()=>{
   if(openId&&$("#overlay").classList.contains("open")&&
      MISSIONS[openId]&&MISSIONS[openId].status==="EN ROUTE")await renderReport(openId);
-},4000);                 // was 2500 — active-mission report refresh
+},2500);
 $("#repClose").onclick=()=>{$("#overlay").classList.remove("open");openId=null;};
 $("#overlay").addEventListener("click",e=>{if(e.target.id==="overlay"){$("#overlay").classList.remove("open");openId=null;}});
 $("#abortBtn").onclick=async()=>{
@@ -1725,7 +1725,7 @@ function micBlocked(){
   handsFree=false;hfStop();hfsStop();closeChannel();
   $("#hfBtn").textContent="HANDS-FREE OFF";$("#hfBtn").classList.remove("armed");
   $("#mic").classList.remove("live","hf");
-  tx("BARS","Chrome blocked my ears. Click the mic/camera icon at the right end of the address bar, ALLOW the microphone for this site, then turn me back on.");
+  tx("TARS","Chrome blocked my ears. Click the mic/camera icon at the right end of the address bar, ALLOW the microphone for this site, then turn me back on.");
   liveHear("MIC BLOCKED — allow the microphone in Chrome's address bar, then retry.",false);
 }
 // never let a mic error fail silently (his rule): surface every kind on screen
@@ -1733,7 +1733,7 @@ function micError(err){
   if(err==="not-allowed"||err==="service-not-allowed"){micBlocked();return;}
   if(err==="no-speech"||err==="aborted")return;              // normal, the loop restarts
   if(err==="audio-capture"){
-    tx("BARS","I can't find a microphone. Plug one in (or check macOS mic permissions for Chrome), then flip HANDS-FREE again.");
+    tx("TARS","I can't find a microphone. Plug one in (or check macOS mic permissions for Chrome), then flip HANDS-FREE again.");
     liveHear("NO MICROPHONE FOUND — check your mic, then retry.",false);return;}
   if(err==="network"){liveHear("Voice server unreachable — check your internet, I'll keep trying.",false);return;}
   liveHear("Mic hiccup ("+err+") — I'm still listening.",false);
@@ -1770,12 +1770,12 @@ function handleUtterance(raw,conf){
     if(conf&&conf<0.5)return;
     rest=t;
   }else{
-    if(speakingN===0)liveHear('heard: “'+t+'” — say “BARS …” to open the channel',true);
+    if(speakingN===0)liveHear('heard: “'+t+'” — say “TARS …” to open the channel',true);
     return;
   }
   if(speakingN>0)stopSpeech();
   if(/^(stand down|stop listening|that'?s all|go to sleep|dismissed|never mind|quiet)\b/i.test(rest)){
-    closeChannel();liveHear('Standing by. Say "BARS…" when you need me.',false);
+    closeChannel();liveHear('Standing by. Say "TARS…" when you need me.',false);
     say("Standing by.");return;
   }
   openChannel();
@@ -1783,7 +1783,7 @@ function handleUtterance(raw,conf){
   routeVoice(rest);
 }
 function micOnce(){
-  if(!SR){tx("BARS","No speech recognition in this browser. Use Chrome.");return;}
+  if(!SR){tx("TARS","No speech recognition in this browser. Use Chrome.");return;}
   if(oneShot){try{oneShot.stop();}catch(e){} return;}
   if(!audioArmed)$("#audioBtn").click();
   oneShot=new SR();oneShot.lang="en-US";oneShot.interimResults=true;
@@ -1804,12 +1804,12 @@ $("#mic").onclick=micOnce;
    with the mic granted (the LIVE call worked, hands-free didn't) — so it's now
    only a fallback when the server has no OpenAI key. */
 const HFS_THRESHOLD=0.02;      // VAD sensitivity — raise if room noise triggers it
-const BARGE_MULT=2.6;          // how much louder than baseline to interrupt BARS
+const BARGE_MULT=2.6;          // how much louder than baseline to interrupt TARS
 const BARGE_MS=260;            // sustained voice needed before we cut him off
 let hfsStream=null,hfsAn=null,hfsRec=null,hfsRecording=false,
     hfsVoiceMs=0,hfsSilMs=0,hfsTimer=null,hfsChunks=[],sttEngine=false,bargeMs=0;
 async function hfsStart(){
-  // echoCancellation: Chrome subtracts the tab's own audio (BARS's voice) from the
+  // echoCancellation: Chrome subtracts the tab's own audio (TARS's voice) from the
   // mic signal — same AEC the live call relies on. This is what makes it safe to
   // keep listening WHILE he talks, instead of going deaf (the old blocked= guard).
   hfsStream=await navigator.mediaDevices.getUserMedia({audio:{
@@ -1828,7 +1828,7 @@ async function hfsStart(){
     const rms=Math.sqrt(s/data.length);
     if(rtcLive){bargeMs=0;hfsVoiceMs=0;hfsSilMs+=dt;return;}  // live call owns the mic
     if(speakingN>0&&!hfsRecording){
-      // BARS is talking → listen OVER him: sustained, clearly-above-echo voice = barge-in
+      // TARS is talking → listen OVER him: sustained, clearly-above-echo voice = barge-in
       if(rms>HFS_THRESHOLD*BARGE_MULT)bargeMs+=dt;
       else bargeMs=Math.max(0,bargeMs-dt*2);
       if(bargeMs>BARGE_MS){bargeMs=0;bargeIn();}
@@ -1842,7 +1842,7 @@ async function hfsStart(){
     if(hfsRecording&&(hfsSilMs>650||hfsVoiceMs>15000))hfsRecStop();
   },50);
 }
-function bargeIn(){            // he spoke over BARS → shut up NOW and capture the rest
+function bargeIn(){            // he spoke over TARS → shut up NOW and capture the rest
   stopSpeech();                // kills the clip AND flushes anything queued (speechGen)
   liveHear("🎙 go ahead —",false);
   hfsVoiceMs=200;hfsSilMs=0;   // his interjection already counts as heard voice
@@ -1886,7 +1886,7 @@ $("#hfBtn").onclick=async()=>{
     try{
       if(useStt){await hfsStart();sttEngine=true;}      // reliable engine (OpenAI STT)
       else{                                             // fallback: browser recognizer
-        if(!SR){tx("BARS","No speech recognition in this browser. Use Chrome.");
+        if(!SR){tx("TARS","No speech recognition in this browser. Use Chrome.");
           $("#hfBtn").textContent="HANDS-FREE OFF";return;}
         const s=await navigator.mediaDevices.getUserMedia({audio:true});
         s.getTracks().forEach(t=>t.stop());sttEngine=false;
@@ -1912,7 +1912,7 @@ $("#hfBtn").onclick=async()=>{
 };
 function hfIdleHint(){   // steady "I'm listening" cue so he always sees it's live
   if(handsFree&&speakingN===0&&!hfsRecording&&(hf||hfsTimer))
-    liveHear(channelOpen()?'◉ LISTENING — just talk':'◉ LISTENING — say "BARS…" to start',true);
+    liveHear(channelOpen()?'◉ LISTENING — just talk':'◉ LISTENING — say "TARS…" to start',true);
 }
 function hfStart(){
   if(hf||!handsFree)return;
@@ -1939,24 +1939,24 @@ function hfStop(){const r=hf;hf=null;if(r){try{r.onend=null;r.onerror=null;r.sto
 setInterval(hfIdleHint,4000);   // keep the listening cue visible during long silences
 
 /* ================= TOUR MODE =================
-   "BARS, what can you do?" → he narrates his capabilities while a spotlight
+   "TARS, what can you do?" → he narrates his capabilities while a spotlight
    walks the interface, section by section, with explainer cards. */
 const TOUR=[
- {t:null,title:"BARS — CULTURE DJ",
+ {t:null,title:"TARS — MISSION AGENT",
   body:"Ex-tactical robot, current employee. He answers questions instantly, runs real work missions in the background while you do something else, and reports back out loud — with receipts.",
-  line:"I'm BARS. Hip-hop culture robot. These days I do your work while you take the credit. Let me show you around.",
+  line:"I'm TARS. Ex-tactical robot. These days I do your work while you take the credit. Let me show you around.",
   demo(){tarsLaunch();}},
  {t:"#briefWrap",title:"ASK vs DEPLOY",
-  body:"Type or speak anything. ASK (Enter) = instant answer — and if the job needs live data, BARS deploys a robot on it himself. DEPLOY (⇧Enter) = straight to work: research, prospect lists, audits, drafts.",
+  body:"Type or speak anything. ASK (Enter) = instant answer — and if the job needs live data, TARS deploys a robot on it himself. DEPLOY (⇧Enter) = straight to work: research, prospect lists, audits, drafts.",
   line:"Two ways to use me. ASK — I answer right now. DEPLOY — I leave, do the actual job, and come back with a full report."},
  {t:"#chips",title:"MISSION IDEAS",
   body:"Pre-loaded jobs tuned to real business work. Click one, edit the details, deploy. You never start from a blank box.",
   line:"No ideas? Steal one of these. Click, tweak, deploy."},
  {t:"#sorties",title:"JOBS — WATCH THE WORK LIVE",
-  body:"Every job lands on this board. While it runs you watch exactly what the robot is doing — every web search, every page read, every cent it costs. Click a job for the full report plus BARS's brutally honest self-review.",
+  body:"Every job lands on this board. While it runs you watch exactly what the robot is doing — every web search, every page read, every cent it costs. Click a job for the full report plus TARS's brutally honest self-review.",
   line:"Every job lands on this board. Watch the work live — every search, every source, every cent. Click one for the full report."},
  {t:"#rig3d",title:"THE FLEET",
-  body:"Missions get bodies. Each running mission spawns a crew robot — CASE, KIPP, PLEX — that walks the stage while it works. Big job? Start your brief with \"squad:\" and BARS splits it across several robots, then merges their reports into one.",
+  body:"Missions get bodies. Each running mission spawns a crew robot — CASE, KIPP, PLEX — that walks the stage while it works. Big job? Start your brief with \"squad:\" and TARS splits it across several robots, then merges their reports into one.",
   line:"Missions get bodies. This is CASE — he walks while he works, and he stays in his lane. Say squad, and I split the job across the whole crew.",
   demo(){if(T3.ready&&T3._fleetRobot)T3._fleetRobot("tour-demo","CASE");},
   undemo(){if(FLEET["tour-demo"])FLEET["tour-demo"].st.despawn=0;}},
@@ -1965,17 +1965,17 @@ const TOUR=[
   line:"My settings. Humor and honesty. Dial them wherever you can handle. Ninety percent honesty is the factory setting for a reason.",
   demo(){tourDialDemo();}},
  {t:"#setBtn",title:"SETTINGS — VOICE, BRAIN, PERMISSIONS",
-  body:"Open Settings to pick BARS's voice, switch the AI model he thinks with (smarter vs faster), and set what he's allowed to do: draft-safe (never sends) or confirm-to-act (can send, but only after you say \"do it\").",
+  body:"Open Settings to pick TARS's voice, switch the AI model he thinks with (smarter vs faster), and set what he's allowed to do: draft-safe (never sends) or confirm-to-act (can send, but only after you say \"do it\").",
   line:"Everything else lives in Settings. My voice, my brain, and what I'm allowed to touch. Draft-safe by default — I don't send anything unless you say: do it.",
   demo(){$("#setBtn").classList.add("tour-pulse");},
   undemo(){$("#setBtn").classList.remove("tour-pulse");}},
  {t:"#hfBtn",title:"HANDS-FREE VOICE",
-  body:"Turn it on, say \"BARS\" once — then it's a normal conversation, no wake word per sentence. He shows everything he hears under the robot, you can interrupt him mid-sentence, and \"stand down\" closes the channel.",
+  body:"Turn it on, say \"TARS\" once — then it's a normal conversation, no wake word per sentence. He shows everything he hears under the robot, you can interrupt him mid-sentence, and \"stand down\" closes the channel.",
   line:"Hands-free. Say my name once and we just talk. Interrupt me any time — I can take it. Say stand down when you're done with me.",
   demo(){$("#hfBtn").classList.add("tour-pulse");},
   undemo(){$("#hfBtn").classList.remove("tour-pulse");}},
  {t:"#seeBtn",title:"SCREEN VISION",
-  body:"Click 🖥 or say \"look at my screen\" — pick a tab or window and it STAYS shared: ask follow-up after follow-up, and BARS always sees the current screen. Click 🖥 again (or say \"stop sharing\") to close the link.",
+  body:"Click 🖥 or say \"look at my screen\" — pick a tab or window and it STAYS shared: ask follow-up after follow-up, and TARS always sees the current screen. Click 🖥 again (or say \"stop sharing\") to close the link.",
   line:"I can watch your screen. Share it once, then just keep asking — I see what you see until you cut the feed.",
   demo(){$("#seeBtn").classList.add("tour-pulse");},
   undemo(){$("#seeBtn").classList.remove("tour-pulse");}},
@@ -2040,7 +2040,7 @@ function startTour(){
     if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}
     if(actx&&actx.state==="suspended")actx.resume();
     sfxDrone(SFX.on);}
-  tx("BARS","⟩ TOUR — walking you through everything I can do. NEXT or → to skip ahead, ESC to bail.");
+  tx("TARS","⟩ TOUR — walking you through everything I can do. NEXT or → to skip ahead, ESC to bail.");
   tourStep(0);
 }
 function endTour(finished){
@@ -2095,11 +2095,11 @@ $("#clearBtn").onclick=async()=>{
 
 /* ================= GPT REALTIME — live WebRTC voice call =================
    Browser ↔ OpenAI Realtime over WebRTC: true low-latency, interruptible
-   conversation. BARS's persona + a deploy_mission tool are set server-side
+   conversation. TARS's persona + a deploy_mission tool are set server-side
    at token-mint. Speaks in an OpenAI voice (not ElevenLabs) while live. */
 let rtcPC=null, rtcStream=null, rtcAudioEl=null, rtcDC=null;
 const rtcHandled=new Set();
-function hookRealtimeAnalyser(stream){   // robot slabs pulse to BARS's live voice
+function hookRealtimeAnalyser(stream){   // robot slabs pulse to TARS's live voice
   try{
     actx=actx||new (window.AudioContext||window.webkitAudioContext)();
     if(actx.state==="suspended")actx.resume();
@@ -2116,7 +2116,7 @@ async function runRealtimeTool(name,argsJson,callId,dc){
       const shot=seeStream?await grabFrame():null;   // screen open → robot gets the frame
       const j=await fetch("/brief",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({brief:a.brief,image:shot})}).then(r=>r.json());
-      if(j.id){announced.add(j.id);tx("BARS","⟩ "+(j.agent||"CASE")+" DEPLOYED: "+a.brief+
+      if(j.id){announced.add(j.id);tx("TARS","⟩ "+(j.agent||"CASE")+" DEPLOYED: "+a.brief+
           (shot?" (with your screen attached)":""));
         (j.children||[]).forEach(c=>announced.add(c));tarsLaunch();poll();
         result=(j.agent||"CASE")+" is on it — announce him by name."+
@@ -2137,7 +2137,7 @@ async function runRealtimeTool(name,argsJson,callId,dc){
              "exactly word for word and nothing else: "+JSON.stringify(q);
     }else if(name==="take_over"&&a.task){
       // live call already got his verbal yes → drive immediately, stream to the card
-      $("#driveCard").classList.add("on");$("#dcTitle").textContent="BARS IS DRIVING";
+      $("#driveCard").classList.add("on");$("#dcTitle").textContent="TARS IS DRIVING";
       $("#dcTask").textContent="Task: "+a.task;$("#dcFeed").innerHTML="";
       dcLine("say","Taking the controls, sir.");
       const jr=await fetch("/hands_request",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -2163,10 +2163,10 @@ async function runRealtimeTool(name,argsJson,callId,dc){
           result="No '"+tid+"' in the catalog. Available: "+TOOLS.map(t=>t.id).join(", ")+".";
         }else if(a.action==="remove"){
           await loadTools();buildToolGrid();
-          tx("BARS","⚒ "+tid+" removed.");result=tid+" removed.";
+          tx("TARS","⚒ "+tid+" removed.");result=tid+" removed.";
         }else{
           await loadTools();openToolsPanel(tid);
-          tx("BARS","⚒ "+tid+" installed.");
+          tx("TARS","⚒ "+tid+" installed.");
           result=tid+" installed"+(j.needs&&j.needs.length
             ?", but it needs "+j.needs.join(", ")+" — the TOOLS panel just opened, tell him to paste the key there."
             :(j.auth==="oauth"?" — the TOOLS panel just opened; tell him to hit CONNECT to sign in, it won't work before that.":" and ready to use on jobs."));
@@ -2175,7 +2175,7 @@ async function runRealtimeTool(name,argsJson,callId,dc){
     }else if(name==="remember"&&a.text){
       await fetch("/remember",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({text:a.text})});
-      tx("BARS","⟩ remembered: "+a.text);result="Stored. I don't forget.";
+      tx("TARS","⟩ remembered: "+a.text);result="Stored. I don't forget.";
     }else if(name==="look_at_screen"){
       const img=seeStream?await grabFrameForLive():null;
       if(!img){
@@ -2218,7 +2218,7 @@ function liveSpeakNudge(instr,tries){   // response.create, but wait out an acti
   if(rtcBusy&&(tries||0)<6){setTimeout(()=>liveSpeakNudge(instr,(tries||0)+1),2000);return;}
   try{rtcDC.send(JSON.stringify({type:"response.create",response:{instructions:instr}}));}catch(e){}
 }
-function liveAnnounce(m,line){          // a job finished while on a live call → BARS says so
+function liveAnnounce(m,line){          // a job finished while on a live call → TARS says so
   try{rtcDC.send(JSON.stringify({type:"conversation.item.create",
     item:{type:"message",role:"user",content:[{type:"input_text",
       text:"(system note: background robot "+(m.agent||"CASE")+" just finished — status "+
@@ -2251,7 +2251,7 @@ function handleRealtimeEvent(ev,dc){
     tx("YOU",ev.transcript.trim());
   }
   else if((t==="response.output_audio_transcript.done"||t==="response.audio_transcript.done")&&ev.transcript){
-    tx("BARS",ev.transcript.trim());
+    tx("TARS",ev.transcript.trim());
   }
   else if(t==="error"){
     const m=(ev.error&&(ev.error.message||ev.error.code))||"unknown";
@@ -2263,7 +2263,7 @@ async function startRealtime(){
   $("#liveBtn").textContent="📡 CONNECTING…";
   try{
     const s=await fetch("/api/realtime_session",{method:"POST"}).then(r=>r.json());
-    if(!s.value){tx("BARS","Live voice unavailable: "+(s.error||"no token"));
+    if(!s.value){tx("TARS","Live voice unavailable: "+(s.error||"no token"));
       $("#liveBtn").textContent="📡 LIVE";return;}
     if(handsFree){handsFree=false;hfStop();hfsStop();closeChannel();
       $("#hfBtn").textContent="HANDS-FREE OFF";$("#hfBtn").classList.remove("armed");
@@ -2293,7 +2293,7 @@ async function startRealtime(){
       }else{
         msg="📡 Mic error ("+nm+"): "+me.message;
       }
-      tx("BARS",msg);liveHear("mic unavailable — fix steps in the chat",true);
+      tx("TARS",msg);liveHear("mic unavailable — fix steps in the chat",true);
       stopRealtime();return;
     }
     const pc=new RTCPeerConnection();rtcPC=pc;
@@ -2308,7 +2308,7 @@ async function startRealtime(){
     pc.addTrack(rtcStream.getAudioTracks()[0],rtcStream);
     const dc=pc.createDataChannel("oai-events");rtcDC=dc;
     dc.onmessage=e=>{try{handleRealtimeEvent(JSON.parse(e.data),dc);}catch(x){}};
-    dc.onopen=()=>{                       // BARS speaks FIRST — instant proof the pipe works
+    dc.onopen=()=>{                       // TARS speaks FIRST — instant proof the pipe works
       liveHear("📡 Connected — he'll greet you. If you hear nothing, check your sound output.",true);
       try{dc.send(JSON.stringify({type:"response.create",
         response:{instructions:"Greet the Commander in one short dry line and tell him you're live."}}));}catch(e){}
@@ -2316,7 +2316,7 @@ async function startRealtime(){
     pc.onconnectionstatechange=()=>{
       if(pc.connectionState==="connecting")liveHear("📡 Connecting…",true);
       if(pc.connectionState==="failed"){
-        tx("BARS","📡 The call couldn't connect — that's a network thing (UDP/WebRTC blocked, VPN, or firewall). Try again, or try off VPN.");
+        tx("TARS","📡 The call couldn't connect — that's a network thing (UDP/WebRTC blocked, VPN, or firewall). Try again, or try off VPN.");
         stopRealtime();}
       else if(["disconnected","closed"].includes(pc.connectionState)&&rtcLive)stopRealtime();};
     const offer=await pc.createOffer();await pc.setLocalDescription(offer);
@@ -2327,8 +2327,8 @@ async function startRealtime(){
     await pc.setRemoteDescription({type:"answer",sdp:await resp.text()});
     rtcLive=true;setBody();
     $("#liveBtn").classList.add("armed");$("#liveBtn").textContent="📡 END CALL";
-    tx("BARS","📡 Live.");
-  }catch(e){tx("BARS","Live voice failed: "+e.message);stopRealtime();}
+    tx("TARS","📡 Live.");
+  }catch(e){tx("TARS","Live voice failed: "+e.message);stopRealtime();}
 }
 function stopRealtime(){
   const was=rtcLive;rtcLive=false;
@@ -2338,7 +2338,7 @@ function stopRealtime(){
   rtcPC=null;rtcStream=null;rtcAudioEl=null;rtcDC=null;rtcBusy=false;rtcHandled.clear();analyser=null;
   $("#liveBtn").classList.remove("armed");$("#liveBtn").textContent="📡 LIVE";
   setBody();
-  if(was){liveHear("Call ended.",false);tx("BARS","📡 Hung up.");}
+  if(was){liveHear("Call ended.",false);tx("TARS","📡 Hung up.");}
 }
 
 /* ---------------- boot ---------------- */
@@ -2354,7 +2354,7 @@ function stopRealtime(){
     if(s.pending)showPending("(queued before reload — open the transcript for details)");
     if(s.realtime){                       // GPT Realtime — true live WebRTC voice
       $("#liveBtn").style.display="";
-      $("#liveBtn").title="live real-time voice call with BARS (GPT Realtime, "+(s.realtime_voice||"voice")+")";
+      $("#liveBtn").title="live real-time voice call with TARS (GPT Realtime, "+(s.realtime_voice||"voice")+")";
       $("#liveBtn").onclick=startRealtime;
     }else if(s.duplex&&s.duplex.agent_id){ // ElevenLabs Agents fallback
       $("#liveBtn").style.display="";
@@ -2370,7 +2370,7 @@ function stopRealtime(){
       };
     }else{
       $("#liveBtn").style.display="";
-      $("#liveBtn").onclick=()=>tx("BARS","Live voice needs an OpenAI key — add openai.api_key to config.json (or it borrows the Jarvis one). See DUPLEX.md.");
+      $("#liveBtn").onclick=()=>tx("TARS","Live voice needs an OpenAI key — add openai.api_key to config.json (or it borrows the Jarvis one). See DUPLEX.md.");
     }
   }catch(e){}
   const d=await fetch("/api/dials").then(r=>r.json()).catch(()=>null);
@@ -2379,10 +2379,10 @@ function stopRealtime(){
   curModel=mj.current||"";
   buildSettings(mj.models);
   paintDial("humor");paintDial("honesty");
-  tarsLine(`BARS ONLINE · HUMOR ${$("#humor").value}% · HONESTY ${$("#honesty").value}%`,true);
-  tx("BARS","Crew's assembled. Ask me anything, deploy real work, or tell me to build you an app. Hands-free is up top if you'd rather talk. Full manual: hit TOUR.");
+  tarsLine(`TARS ONLINE · HUMOR ${$("#humor").value}% · HONESTY ${$("#honesty").value}%`,true);
+  tx("TARS","Crew's assembled. Ask me anything, deploy real work, or tell me to build you an app. Hands-free is up top if you'd rather talk. Full manual: hit TOUR.");
   try{if(!localStorage.getItem("tars_tour_done"))
-    tx("BARS",'First time here? Ask me "what can you do?" — or hit TOUR up top — and I\'ll walk you through everything myself.');}catch(e){}
+    tx("TARS",'First time here? Ask me "what can you do?" — or hit TOUR up top — and I\'ll walk you through everything myself.');}catch(e){}
   poll();
 })();
 </script>

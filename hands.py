@@ -1,6 +1,6 @@
-"""TARS HANDS — permission-gated REAL DESKTOP takeover (cross-platform: macOS + Windows).
+"""BARS HANDS — permission-gated REAL DESKTOP takeover (cross-platform: macOS + Windows).
 
-"Permission to take the controls, sir?" → "go ahead" → TARS drives your actual machine
+"Permission to take the controls, sir?" → "go ahead" → BARS drives your actual machine
 (your real mouse + keyboard on your real screen) via Claude's computer-use vision loop:
 screenshot → Claude picks an action → native input events execute it on the live desktop →
 screenshot → repeat, until Claude says done, the step cap hits, you press STOP, or you
@@ -403,7 +403,7 @@ def run(task):
     SCALE["sx"], SCALE["sy"] = pw / sw, ph / sh
 
     danger = any(d in task.lower() for d in DANGER)
-    persona = CTX.get("persona", lambda: "You are TARS.")
+    persona = CTX.get("persona", lambda: "You are BARS — the hip-hop culture robot. Stay in character.")
     mem = CTX.get("mem", lambda: "")
     system = (persona() + mem() +
         f"\nYou are now controlling the Commander's REAL Mac to accomplish this task: {task}\n"

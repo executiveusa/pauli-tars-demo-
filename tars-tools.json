@@ -1,0 +1,25 @@
+{
+  "installed": {
+    "youtube": {
+      "env": {}
+    },
+    "huggingface": {
+      "env": {}
+    },
+    "github": {
+      "env": {}
+    },
+    "notion": {
+      "env": {}
+    },
+    "firecrawl": {
+      "env": {}
+    },
+    "gcal": {
+      "env": {}
+    },
+    "vercel": {
+      "env": {}
+    }
+  }
+}

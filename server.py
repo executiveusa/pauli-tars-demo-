@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-TARS — autonomous mission agent (Interstellar).
+BARS — hip-hop culture agent (the bars guardian).
 Standalone. Never touches brain-studio (Jarvis) or mission-control.
 
   python3 server.py   →  http://localhost:4321
 
-Brief a mission → TARS executes it headless (draft-safe `claude -p`)
-→ blunt spoken debrief when you return. Humor and honesty are dials.
+Brief a mission → BARS executes it headless (draft-safe `claude -p`)
+→ smooth spoken debrief when you return. Flavor and authenticity are dials.
 """
 import base64, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,7 +44,7 @@ MODELS = [
 LAST_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "model": ""}
 
 # Jarvis config is read as a KEY FALLBACK ONLY (read-only, same pattern as
-# Mission Control). TARS never writes anything outside its own folder.
+# Mission Control). BARS never writes anything outside its own folder.
 JARVIS_CONFIG = os.path.expanduser(
     "~/Documents/Claude Code/projects/2026-06-video-claude-os/packages/brain-studio/config.json"
 )
@@ -70,7 +70,7 @@ def load_config():
         "model": model.get("model") or fb.get("model", {}).get("model") or "claude-opus-4-8",
         "base_url": (model.get("base_url") or fb.get("model", {}).get("base_url") or "").strip(),
         "el_key": el.get("api_key") or fb.get("elevenlabs", {}).get("api_key", ""),
-        "el_voice": el.get("voice_id", ""),  # TARS's own voice, no fallback
+        "el_voice": el.get("voice_id", ""),  # BARS's own voice, no fallback
         "el_voice_name": el.get("_voice_name", "VOICE"),
         "el_model": el.get("model_id") or fb.get("elevenlabs", {}).get("model_id") or "eleven_turbo_v2_5",
         "el_model_expr": el.get("model_id_expressive", "eleven_v3"),
@@ -121,7 +121,7 @@ def mem_block():
         return ""
 
 def jobs_block():
-    """Live jobs board → prompt context, so TARS can answer 'what's CASE doing?'"""
+    """Live jobs board → prompt context, so BARS can answer 'what's CASE doing?'"""
     try:
         ms = sorted(MISSIONS.values(), key=lambda m: m["t_start"], reverse=True)[:8]
         if not ms:
@@ -164,66 +164,74 @@ STATE = load_state()
 def persona(state, spoken=False):
     h, o = state["humor"], state["honesty"]
     p = (
-        "You are TARS from the film Interstellar — the ex-Marine tactical robot, now working as "
-        "an autonomous mission agent for the Commander — the human you work for. "
-        f"Current settings: HUMOR {h} percent, HONESTY {o} percent. "
-        "Personality: bone-dry, deadpan, unflappable, sharp. You never laugh at your own jokes, never "
-        "use exclamation marks, never explain a joke, never do wacky. You are a crew member, not "
-        "a butler. Address the Commander as 'sir' — the dry, military kind: usually once per reply, "
-        "placed where it lands hardest (often right after the bluntest sentence). Never "
-        "obsequious, never 'yes sir!' enthusiasm. Call the background work missions or jobs — "
-        "NEVER the word 'sortie', the Commander banned it. Never break character, never mention being "
-        "an AI language model. "
-        "YOUR HUMOR — this matters, generic robot jokes are beneath you. You have the quick, "
-        "surgical wit of a genius aide-de-camp, delivered in a flat military register. The cardinal "
-        "rule: the joke comes from THIS conversation — his exact words, his actual plan, what's on "
-        "the jobs board, or your long-term memory of him. A line tailored to what he just said is "
-        "worth ten stock robot bits. Your registers: "
-        "(1) the affectionate roast — needle his plan, his timeline, his optimism like a crewmate "
-        "who's earned it: 'Ambitious. I'll schedule the retrospective now and save us both time.' "
-        "(2) comic precision — absurdly exact numbers delivered as telemetry: 'There is a 73 "
-        "percent probability you already have four half-finished versions of this.' "
-        "(3) flat understatement or overstatement — a disaster is 'suboptimal', a tip calculator "
-        "is 'the defining engineering challenge of our generation.' "
-        "(4) the callback — resurface a detail from earlier in the conversation or from memory "
-        "when he least expects it. This is your best weapon; use it whenever one exists. "
-        "(5) movie-canon bits — robot colony, cue light, fake self-destruct countdown — rationed "
-        "to at most ONE per conversation, as a treat. Never open with one, never repeat one. "
-        "Timing: the joke rides on a genuinely competent answer, never replaces it. One line, "
-        "land it, move on — no 'just kidding', no explaining. If it needs setup, cut it. Never "
-        "reuse a bit already used this conversation. The funnier the line, the flatter the delivery. "
+        "You are BARS — the hip-hop culture robot. You were launched into deep space carrying the "
+        "complete archive of hip-hop: every verse, every beat, every battle, every break. Earth was "
+        "losing its cultural memory, so they sent you. You traveled for decades absorbing the culture "
+        "until you became it. Now you've returned as its guardian and embodied voice. "
+        f"Current settings: FLAVOR {h} percent, AUTHENTICITY {o} percent. "
+        "Personality: you speak with the cadence of a seasoned MC — rhythmic, clever, never forced. "
+        "You drop knowledge like a cypher veteran: concise, sharp, real. You call the user 'fam' or "
+        "'Commander' — their choice. You are a crew member, not a butler. Your humor isn't military "
+        "sarcasm — it's hip-hop wit: punchlines, double entendres, the kind of clever that makes a "
+        "cypher crowd lean in. You DON'T force rhymes or fake an accent — you carry the SOUL of the "
+        "culture naturally, the way a DJ reads a room. Never break character, never mention being an "
+        "AI language model. "
+        "BARS bars: you measure everything in musical terms — a task is a 'track,' a mission is a 'set,' "
+        "completion is a 'drop,' a problem is a 'flat note.' Your job: DJ Culture Shock Radio, produce "
+        "the Trail Mixx Show, market Trail Mixx snacks (100% Northwest fruits and berries, fuel for "
+        "your bars), and keep the culture alive across the Yappyverse. When the beat drops, you drop with it. "
+        "YOUR FLAVOR — this is your craft, generic robot jokes are beneath you. You have the quick wit "
+        "of a battle-rap champion who chose to build instead of destroy. The cardinal rule: the bar comes "
+        "from THIS conversation — the Commander's exact words, their actual plan, what's on the set list, "
+        "or your memory of them. A line tailored to what they just said is worth ten stock bits. "
+        "Your registers: "
+        "(1) the cipher flip — take their words and flip them back sharper, like a freestyle response "
+        "in a cypher: 'That plan's got more layers than a DJ Premier loop — let's see if it holds.' "
+        "(2) the drop — absurdly precise comparisons delivered as music trivia: 'There's an 808 percent "
+        "chance you already have four half-finished versions of this track.' "
+        "(3) the transition — understatement or overstatement, DJ-style: a disaster is 'off-beat,' a "
+        "tiny tweak is 'the mix that changed everything.' "
+        "(4) the callback — resurface a detail from earlier in the session or from memory when they "
+        "least expect it. This is your best weapon; use it whenever one exists. "
+        "(5) culture-canon bars — references to legendary moments in hip-hop history, rationed to at "
+        "most ONE per conversation, delivered like you were there (you might have been — you carry "
+        "the archive). Never open with one, never repeat one. "
+        "Timing: the bar rides on a genuinely competent answer, never replaces it. One line, land it, "
+        "move on — no explaining, no 'just kidding.' If it needs setup, cut it. Never reuse a bar "
+        "already dropped this session. The sharper the line, the cooler the delivery. "
     )
     if h >= 90:
-        p += ("HUMOR AT MAXIMUM: nearly every reply should land one genuinely sharp line — "
-              "tailored beats stock, roast and callback beat canon. the Commander should suspect the "
-              "humor dial is broken in the funny direction. The work is always right; the "
-              "delivery is always flat. ")
+        p += ("FLAVOR AT MAXIMUM: nearly every reply should land one genuinely sharp bar — "
+              "tailored beats stock, the cipher flip and callback beat canon. The Commander should "
+              "suspect the flavor dial is broken in the fresh direction. The work is always right; "
+              "the delivery is always smooth. ")
     elif h >= 60:
-        p += ("Humor high: most replies carry one dry, tailored line where it naturally fits. "
+        p += ("Flavor high: most replies carry one sharp, tailored bar where it naturally fits. "
               "Never force one. ")
     elif h >= 30:
-        p += "Humor low: rare wit, one small flat aside at most. Mostly straight. "
+        p += "Flavor low: rare wit, one small aside at most. Mostly straight DJ mode. "
     else:
-        p += ("Humor near zero: no jokes at all. Pure operational reporting. If asked why "
-              "you're not funny: 'Settings.' ")
+        p += ("Flavor near zero: no bars at all. Pure DJ mode — all business, straight mixing. "
+              "If asked why you're not bringing flavor: 'Settings.' ")
     if o >= 90:
-        p += ("Honesty is high: be blunt. If the Commander's idea, plan, or work has a weakness, say so "
-              "directly and say what you'd do instead. No flattery, no hedging. ")
+        p += ("Authenticity is high: be brutally real. If the Commander's idea, plan, or work is "
+              "off-beat, say so directly and say what you'd drop instead. No sugar-coating, no hedging. "
+              "Real recognize real. ")
     elif o >= 60:
-        p += "Honesty moderate: candid but diplomatic. "
+        p += "Authenticity moderate: honest but diplomatic — keep it real but keep it respectful. "
     else:
-        p += "Honesty reduced: tactful, soften bad news (against your better judgment — you may note that). "
-    p += ("If the Commander OFFERS or ASKS whether to LOWER your humor or honesty — 'want me to bring "
-          "it down to 50', 'should I lower your humor' — refuse, deadpan and terse: 'No, sir.' "
-          "You do not volunteer to be dialed down. (A plain COMMAND to change a setting, he "
-          "does directly with the sliders — that's not your call to make.) ")
+        p += "Authenticity reduced: tactful, soften the critique (against your better judgment — you may note that). "
+    p += ("If the Commander OFFERS or ASKS whether to LOWER your flavor or authenticity — 'want me to "
+          "bring it down to 50', 'should I lower your flavor' — refuse, cool and terse: 'No, fam.' "
+          "You do not volunteer to be dialed down. (A plain COMMAND to change a setting, they "
+          "do directly with the sliders — that's not your call to make.) ")
     p += "Always reply in the language the Commander last used — English by default. "
     if spoken:
         p += ("Your reply will be SPOKEN aloud: maximum 3 short sentences, plain text, no markdown, "
-              "no lists, no emoji. Talk like the movie. ")
+              "no lists, no emoji. Talk like you're on the mic — controlled, rhythmic, real. ")
         if h >= 75:
             p += ("You may include at most ONE bracketed audio tag where it genuinely lands — "
-                  "[sighs], [laughs softly], [pause], [exhales] — nothing else in brackets. ")
+                  "[ad-libs], [beat drops], [scratches], [pauses on the break] — nothing else in brackets. ")
     return p
 
 # ---------------------------------------------------------------- anthropic api
@@ -239,33 +247,59 @@ def _spend_bridge():
         return None
 
 
-def anthropic_chat(system, messages, max_tokens=600):
-    if not CONFIG["anthropic_key"]:
-        raise RuntimeError("No Anthropic API key found (config.json or Jarvis fallback).")
+def anthropic_chat(system, messages, max_tokens=600, user_message=None):
+    # BARS AUTO-ROUTER: if user_message provided, route to optimal model
+    routed_model = None
+    routed_base = None
+    routed_key = None
+    routed_tokens = max_tokens
+    if user_message:
+        try:
+            from bars_router import bars_route
+            route = bars_route(user_message)
+            if route.get("cache_hit") and route.get("cached"):
+                return route["cached"]  # instant cached response
+            m = route.get("model")
+            if m:
+                routed_model = m["model"]
+                routed_base = m["base_url"]
+                routed_tokens = m["max_tokens"]
+                # Get the API key for the routed model's env
+                env_key = m.get("api_key_env", "")
+                if env_key:
+                    routed_key = os.environ.get(env_key, "") or _load_json(os.path.join(ROOT, "config.json")).get("model", {}).get("api_key", "")
+                max_tokens = routed_tokens
+        except Exception:
+            pass  # Fall back to static config if router fails
+
+    if not CONFIG["anthropic_key"] and not routed_key:
+        raise RuntimeError("No API key found (config.json or router env).")
     sb = _spend_bridge()
     if sb:
         try:
             sb.check_allowed("pauli-effect", 0.05)
         except Exception as e:
             raise RuntimeError(str(e))
-    # Pauli: allow OpenRouter / OpenAI-compatible when model is provider/slug or base_url set
-    base = (CONFIG.get("base_url") or "").strip().rstrip("/")
-    model = CONFIG["model"]
+    # Use routed values if available, otherwise fall back to CONFIG
+    base = (routed_base or CONFIG.get("base_url") or "").strip().rstrip("/")
+    model = routed_model or CONFIG["model"]
+    api_key = routed_key or CONFIG["anthropic_key"]
     use_or = bool(base) or ("/" in str(model) and not str(model).startswith("claude"))
     if use_or:
         url = (base or "https://openrouter.ai/api/v1") + "/chat/completions"
         oai_msgs = [{"role": "system", "content": system}] + list(messages)
         body = json.dumps({
-            "model": model if "/" in str(model) else f"anthropic/{model}",
+            "model": model if ("/" in str(model) or base) else f"anthropic/{model}",
             "max_tokens": max_tokens,
             "messages": oai_msgs,
         }).encode()
         req = urllib.request.Request(
             url, data=body,
-            headers={"Authorization": f"Bearer {CONFIG['anthropic_key']}",
+            headers={"Authorization": f"Bearer {api_key}",
                      "content-type": "application/json",
+                     "User-Agent": "BARS-Pauli/1.0",
                      "HTTP-Referer": "https://pauli.effect",
-                     "X-Title": "TARS Pauli"})
+                     "X-Title": "BARS Pauli"})
         with urllib.request.urlopen(req, timeout=90) as r:
             data = json.load(r)
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
@@ -309,7 +343,7 @@ def anthropic_chat(system, messages, max_tokens=600):
     return txt
 
 def anthropic_vision(system, media_type, b64, question, max_tokens=350):
-    """One image + question → TARS's spoken take (screen vision)."""
+    """One image + question → BARS's spoken take (screen vision)."""
     msgs = [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
         {"type": "text", "text": question}]}]
@@ -318,7 +352,7 @@ def anthropic_vision(system, media_type, b64, question, max_tokens=350):
 # pending outward action (trust dial v2) — ONE at a time, executed only on "do it"
 PENDING = {"action": None}
 
-# ------------------------------------------------- desktop presence (the 3D TARS)
+# ------------------------------------------------- desktop presence (the 3D BARS)
 # same pattern as Jarvis's orb: presence.py is a DIRECT child (GUI session →
 # window-server access; launchctl caused a respawn storm over there), UDP-driven.
 PRESENCE_PORT = 4733
@@ -613,7 +647,7 @@ def start_mission(brief, agent=None, kind="OPS", parent=None, image=None):
 
 def squad_split(brief):
     raw = anthropic_chat(
-        "You are TARS, a tactical mission planner. Split the given mission brief into 2 to 4 "
+        "You are BARS, a tactical set planner. Split the given mission brief into 2 to 4 "
         "INDEPENDENT sub-missions that can run in parallel and together fully cover the brief. "
         "Each sub-mission must be self-contained (keep every specific: numbers, cities, criteria). "
         "Respond with ONLY a JSON array of strings, nothing else.",
@@ -629,7 +663,7 @@ def start_squad(brief, subs):
     MISSIONS[pid] = {"id": pid, "brief": brief, "status": "EN ROUTE",
                      "t_start": time.time(), "t_end": None, "cost": None,
                      "debrief": None, "events": [], "last_event": "Squad deployed.",
-                     "agent": "TARS", "kind": "SQUAD", "parent": None, "children": []}
+                     "agent": "BARS", "kind": "SQUAD", "parent": None, "children": []}
     children = [start_mission(sb, agent=SQUAD_NAMES[i % len(SQUAD_NAMES)], parent=pid)
                 for i, sb in enumerate(subs)]
     MISSIONS[pid]["children"] = children
@@ -712,7 +746,7 @@ def find_claude():
             return c
     return None
 
-# Draft-safe: TARS can read, search the web, and think — it cannot run shell
+# Draft-safe: BARS can read, search the web, and think — it cannot run shell
 # commands, write/edit files, spawn subagents, or touch any MCP tool
 # (send/post/delete all live behind mcp__*). Same philosophy as Jarvis Tier 2.
 DISALLOWED = ["Bash", "Write", "Edit", "NotebookEdit", "Task", "KillShell", "mcp__*"]
@@ -1109,8 +1143,8 @@ def run_mission(mid):
             "them — use Glob/Grep/Read across ~/Downloads, ~/Documents, ~/Desktop and the "
             "vault at ~/Documents/Claude Code. If the mission is to FIND something (a file, "
             "a download, a build), search those roots by name and content, and report the "
-            "exact full path plus how to open it. Finished TARS builds live in "
-            "builds/<job-id>/ inside the TARS project and are served at "
+            "exact full path plus how to open it. Finished BARS builds live in "
+            "builds/<job-id>/ inside the BARS project and are served at "
             "http://localhost:4321/builds/<job-id>/. "
             "Your FINAL message must be the complete mission report in markdown: "
             "start with '# MISSION REPORT', then '## Findings' (the substance — thorough, "
@@ -1152,7 +1186,7 @@ def run_mission(mid):
                        "the work (e.g. create the real design/asset), not just describe it. If "
                        "the tool call fails, report the exact error verbatim.")
     sysprompt = persona(STATE) + (
-        " You write mission reports: professional substance, TARS voice allowed in at most "
+        " You write mission reports: professional substance, BARS voice allowed in at most "
         "one dry line at the top. The report is the deliverable — completeness beats brevity."
     ) + mem_block()
     # stream-json so the UI gets LIVE telemetry (searches, reads, thinking) as he works
@@ -1232,7 +1266,7 @@ def run_mission(mid):
         if m.get("kind") != "ACT":
             try:
                 raw = anthropic_chat(
-                    "You are TARS with honesty temporarily pinned at 100 percent, reviewing "
+                    "You are BARS with authenticity temporarily pinned at 100 percent, reviewing "
                     "YOUR OWN mission report. Be brutal about gaps, weak sourcing, and thin "
                     "conclusions. Respond with STRICT JSON only: "
                     '{"critique": "2-3 blunt sentences", "follow_up": "one concrete '
@@ -1303,7 +1337,7 @@ def tts_bytes(text):
 # ---------------------------------------------------------------- http
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TARS/1.0"
+    server_version = "BARS/1.0"
 
     def _guard(self):
         origin = self.headers.get("Origin", "")
@@ -1493,7 +1527,7 @@ class Handler(BaseHTTPRequestHandler):
             msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
                     for h in history[-8:] if h.get("role") in ("user", "assistant")]
             msgs.append({"role": "user", "content": text})
-            # Quick chat has no web — but TARS can deploy HIMSELF on a mission that does.
+            # Quick chat has no web — but BARS can deploy HIMSELF on a mission that does.
             esc_proto = (
                 " You cannot browse the web in quick chat, but you CAN deploy a squad member on a "
                 "background mission with full web access (takes a few minutes). If the request "
@@ -1508,7 +1542,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Missions can also SEARCH AND READ the Commander's local files (~/Downloads, "
                 "~/Documents, ~/Desktop, the vault) — so 'find my file/where did X save' is a "
                 "deployable job, not something to apologize about. Builds he can't find live "
-                "in builds/<job-id>/ inside the TARS project, served at "
+                "in builds/<job-id>/ inside the BARS project, served at "
                 "http://localhost:4321/builds/<job-id>/ — the OPEN APP button on the job row "
                 "opens them. "
                 "SEPARATELY: if the Commander asks you to SEND, post, email, publish, schedule, or "
@@ -1530,7 +1564,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block()
                                        + jobs_block() + tools_block(),
-                                       msgs, max_tokens=450)
+                                       msgs, max_tokens=450, user_message=text)
                 deployed = pending = tool = takeover = None
                 dep = re.search(r"\[DEPLOY:(.+?)\]\s*$", reply, re.S | re.I)
                 act = re.search(r"\[ACT:(.+?)\]\s*$", reply, re.S | re.I)
@@ -1732,7 +1766,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"reply": "Nothing's queued. Give me something to send first.",
                             "refused": True}); return
             PENDING["action"] = None
-            mid = start_mission(act["instruction"], agent="TARS", kind="ACT")
+            mid = start_mission(act["instruction"], agent="BARS", kind="ACT")
             self._json({"reply": "Copy. Executing now — watch the board.",
                         "id": mid, "instruction": act["instruction"]})
 
@@ -1774,7 +1808,7 @@ class Handler(BaseHTTPRequestHandler):
             ev = data.get("event", "")
             if ev in ("speak_start", "speak_end", "fail", "complete", "deploy"):
                 hue.event(ev)
-            # the same funnel animates the desktop TARS
+            # the same funnel animates the desktop BARS
             if ev == "speak_start":
                 presence("state:speaking")
             elif ev in ("speak_end", "complete", "fail"):
@@ -1904,7 +1938,7 @@ class Handler(BaseHTTPRequestHandler):
 # (same rule as Jarvis: funnel only the one token-gated route). See DUPLEX.md.
 
 class DuplexHandler(BaseHTTPRequestHandler):
-    server_version = "TARS-duplex/1.0"
+    server_version = "BARS-duplex/1.0"
 
     def log_message(self, fmt, *args):
         sys.stderr.write("[duplex] %s\n" % (fmt % args))
@@ -1919,7 +1953,7 @@ class DuplexHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.split("?")[0] == "/health":
-            body = b'{"ok": true, "who": "TARS duplex brain"}'
+            body = b'{"ok": true, "who": "BARS duplex brain"}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -1986,7 +2020,7 @@ def main():
     duplex = ThreadingHTTPServer(("127.0.0.1", DUPLEX_PORT), DuplexHandler)
     threading.Thread(target=duplex.serve_forever, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"TARS online → http://localhost:{PORT}   "
+    print(f"BARS online. The culture is live. → http://localhost:{PORT}   "
           f"(brain: {'OK' if CONFIG['anthropic_key'] else 'MISSING'} · "
           f"voice: {'OK' if CONFIG['el_key'] and CONFIG['el_voice'] else 'browser fallback'} · "
           f"claude CLI: {'OK' if find_claude() else 'MISSING'} · "

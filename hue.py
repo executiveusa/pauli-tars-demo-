@@ -1,4 +1,4 @@
-"""Philips Hue link — the room reacts to TARS.
+"""Philips Hue link — the room reacts to BARS.
 
 Amber wash while he speaks, red flash on a failed sortie, amber blink on
 mission complete, brief flare on deploy. Local bridge v1 API, stdlib only.
@@ -17,7 +17,7 @@ _SPEAKING = [False]
 _JARVIS_HUE = os.path.expanduser(
     "~/Documents/Claude Code/projects/2026-06-video-claude-os/packages/brain-studio/jarvis-hue.json")
 
-AMBER = {"hue": 6300, "sat": 220}     # TARS amber, not Jarvis emerald
+AMBER = {"hue": 6300, "sat": 220}     # BARS amber (hip-hop gold), not Jarvis emerald
 RED = {"hue": 0, "sat": 254}
 
 

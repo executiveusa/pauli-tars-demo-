@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TARS presence — the monolith floating on the REAL desktop, no window chrome.
+"""BARS presence — the monolith floating on the REAL desktop, no window chrome.
 
 Borderless, transparent, click-through, always-on-top window pinned to the right edge,
 middle of the screen. Because it's a real on-screen window it also rides whole-screen shares.
@@ -67,7 +67,7 @@ if IS_MAC:
                         NSWindowStyleMaskBorderless)
     from Foundation import NSAffineTransform, NSObject, NSString, NSTimer
 
-    class TarsView(NSView):
+    class BarsView(NSView):
         t0 = 0.0
         _off = (0.0, 0.0)
 
@@ -117,7 +117,7 @@ if IS_MAC:
         win.setIgnoresMouseEvents_(False)
         win.setCollectionBehavior_(NSWindowCollectionBehaviorMoveToActiveSpace)
         win.setHasShadow_(False)
-        view = TarsView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
+        view = BarsView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
         view.t0 = time.time()
         win.setContentView_(view)
         win.orderFrontRegardless()
@@ -138,7 +138,7 @@ elif IS_WIN or IS_LINUX:
     from PyQt6.QtGui import (QPainter, QColor, QPen, QBrush, QPainterPath,
                              QRadialGradient, QLinearGradient)
 
-    class TarsMonolith(QWidget):
+    class BarsMonolith(QWidget):
         """The floating amber monolith — borderless, transparent, always-on-top."""
 
         def __init__(self):
@@ -236,7 +236,7 @@ elif IS_WIN or IS_LINUX:
             painter.setPen(edge_pen)
             painter.drawRoundedRect(body_x, body_y, body_w, body_h, 8, 8)
 
-            # Inner screen panel (the TARS face screen)
+            # Inner screen panel (the BARS face screen)
             screen_x, screen_y = body_x + 12, body_y + 20
             screen_w, screen_h = body_w - 24, 60
             painter.setBrush(QBrush(QColor(8, 7, 5, 240)))
@@ -264,7 +264,7 @@ elif IS_WIN or IS_LINUX:
     def main():
         import sys
         app = QApplication(sys.argv)
-        monolith = TarsMonolith()
+        monolith = BarsMonolith()
         threading.Thread(target=udp_listener, daemon=True).start()
         app.exec()
 
@@ -275,7 +275,7 @@ elif IS_WIN or IS_LINUX:
 else:
     # Unsupported OS — no-op (server still runs, just no desktop monolith)
     def main():
-        print("TARS presence: unsupported OS, skipping desktop monolith.")
+        print("BARS presence: unsupported OS, skipping desktop monolith.")
         print("The web UI still has the full 3D monolith in the browser.")
 
 if __name__ == "__main__":
