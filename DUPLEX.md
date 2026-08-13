@@ -17,17 +17,27 @@ Used when the ElevenLabs agent path is configured. It keeps BARS's ElevenLabs vo
 
 ## Local duplex brain
 
-`server.py` starts an OpenAI-compatible brain at **http://127.0.0.1:4323** (`POST /v1/chat/completions`, streaming supported), locked behind the Bearer token in `bars-duplex.json`.
+`server.py` starts an OpenAI-compatible brain at **http://127.0.0.1:4323** (`POST /v1/chat/completions`, streaming supported).
 
-For backward compatibility during migration, a runtime may read a legacy `tars-duplex.json` once, but new state must be written under the BARS name. Remove the legacy file after the migration is verified.
+### Current compatibility filename
+
+The current runtime still stores its local duplex token in `tars-duplex.json`. This is a legacy internal filename only; the product/agent identity is BARS. Do not rename the file in documentation ahead of the runtime migration, because that would make setup instructions false.
+
+The planned runtime cleanup is:
+
+1. add canonical `bars-duplex.json`, `bars-state.json`, and `bars-memory.md` paths;
+2. read legacy `tars-*` files only as one-time migration fallbacks;
+3. write all new state under `bars-*`;
+4. verify restart/resume behavior;
+5. remove legacy files only after migration proof.
 
 **Do not expose port 4321 publicly.** If remote access is required, expose only the narrow token-gated interface and apply the normal security review.
 
 ## ElevenLabs custom-LLM setup
 
 1. Tunnel only the duplex endpoint you intend to expose, for example `http://localhost:4323`.
-2. In ElevenLabs Agents, create/configure the agent using the tunnel URL ending in `/v1`.
-3. Use the token value from `bars-duplex.json` as the API credential.
+2. In ElevenLabs Agents, configure the custom LLM with the tunnel URL ending in `/v1`.
+3. Until the runtime-path migration lands, use the token from `tars-duplex.json`.
 4. Use model id `bars`.
 5. First message: `BARS online. Talk.`
 6. Save the ElevenLabs agent id to `config.json -> elevenlabs.agent_id` and restart BARS.
