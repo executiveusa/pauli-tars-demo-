@@ -70,17 +70,15 @@ server = server.replace('sys.stderr.write("[tars] %s\\n" % (fmt % args))',
 server = server.replace('"model": "tars"', '"model": "bars"')
 SERVER.write_text(server, encoding="utf-8")
 
-# ----------------------------- frontend: all local symbols and visible identity become BARS
+# ----------------------------- frontend: local symbols and visible identity become BARS
 html = HTML.read_text(encoding="utf-8")
 html = html.replace("TARS", "BARS").replace("tars", "bars")
 html = html.replace("T-A-R-S", "B-A-R-S")
 html = replace_once(html, 'id="wordmark">TA<b>R</b>S', 'id="wordmark">BA<b>R</b>S', "wordmark")
 
-# Replace the old speech-recognition aliases with BARS-first aliases while retaining TARS as a
-# temporary spoken compatibility alias. This does not expose TARS in visible UI copy.
-old_wake = r'''const WAKE=/^(?:hey\s+|okay\s+|ok\s+|so\s+|yo\s+|a\s+)*(?:bars|tarz|tar'?s|tarts?|tarse|tarsh|tarus|taurus|stars?|cars|tas|tar)\b[,.!:?\s]*(.*)$/i;'''
-new_wake = r'''const WAKE=/^(?:hey\s+|okay\s+|ok\s+|so\s+|yo\s+|a\s+)*(?:bars|barz|bar'?s|barrs?|bards?|tars|tarz|tar'?s)\b[,.!:?\s]*(.*)$/i;'''
-html = replace_once(html, old_wake, new_wake, "wake-word regex")
+# The inspected wake regex begins with `tars`; the lower-case identity migration above makes
+# its primary accepted wake phrase `bars` while keeping the rest of the speech-recognition
+# tolerance intact. The regression check below proves BARS is accepted before commit.
 
 # Preserve old browser preferences once while all future writes use bars_* keys.
 anchor = '''const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));'''
