@@ -1,0 +1,22 @@
+name: BARS checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Identity regression
+        run: python scripts/check_bars_identity.py
+      - name: Runtime syntax
+        run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py
