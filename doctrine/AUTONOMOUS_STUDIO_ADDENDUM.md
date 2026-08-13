@@ -10,7 +10,7 @@ Source of truth for base doctrine remains Pi `company/`. Do not fork HEART/SOUL 
 3. **Sandcastle** — isolated overnight coding; merge only with human approval.
 4. **Orgo** — cloud computers for agent-setup-agent and UI work without APIs.
 5. **Land-the-plane / beads** — close green work; extract skills from failures (Flywheel).
-6. **Sell** — Jarvis + TARS as product faces; Smart Sites as HEART revenue.
+6. **Sell** — Jarvis + BARS as product faces; Smart Sites as HEART revenue.
 
 ## Money rules
 - Client pays their own model costs (OpenRouter or equivalent).
@@ -27,6 +27,6 @@ Source of truth for base doctrine remains Pi `company/`. Do not fork HEART/SOUL 
 - Short max_tokens; small RAG top-k; web research off by default.
 
 ## Products
-- **Jarvis** — second brain + voice.
-- **TARS** — missions, draft-safe.
+- **Jarvis** — presence/voice layer.
+- **BARS** — music/media/computer-use missions and Trail Mixx operator, draft-safe by default.
 - **Own-Server Bundle** — client owns VPS; optional manage tier.

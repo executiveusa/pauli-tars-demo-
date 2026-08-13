@@ -1,66 +1,49 @@
-# TARS Live Voice — real-time conversation (📡)
+# BARS Live Voice — real-time conversation (📡)
 
-Turn-based voice (wake word / hands-free) works out of the box. The **📡 LIVE**
-button gives TARS a real phone-call feel: sub-second turns, natural
-interruptions, no wake word. Two engines:
+Turn-based voice works out of the box. The **📡 LIVE** button gives BARS a real phone-call feel: sub-second turns, natural interruptions, and no wake word. Two engines are supported.
 
-## Engine A — GPT Realtime (WIRED, default) ✅
+## Engine A — GPT Realtime (wired default)
 
-The 📡 LIVE button runs **OpenAI Realtime over WebRTC** — browser talks straight
-to OpenAI, so latency is minimal and you can talk over him. TARS's persona (with
-your humor/honesty dials + long-term memory) is loaded as the session
-instructions, and he has two live tools: **deploy_mission** (say "go research…"
-/ "build me…" and a robot spins up mid-call) and **remember**.
+The 📡 LIVE button uses **OpenAI Realtime over WebRTC**. The browser talks directly to OpenAI for low latency and barge-in. BARS's persona, current flavor/authenticity settings, and bounded context are loaded as session instructions. Live tools include mission deployment and memory capture.
 
-- **Key:** uses `openai.api_key` from `config.json`, or **borrows the Jarvis
-  OpenAI key** automatically (read-only fallback). Nothing to set up if Jarvis is
-  configured — the button just works.
-- **Voice while live:** an OpenAI voice (`ash` by default — deep, dry; change
-  `openai.realtime_voice` in config). NOT the ElevenLabs voice — Realtime uses
-  OpenAI's own TTS. Turn-based replies still use your ElevenLabs pick.
-- **Needs:** an OpenAI key with Realtime access, mic permission for the site,
-  and a Chromium browser. Server endpoint: `POST /api/realtime_session`.
+- **Key:** uses `openai.api_key` from `config.json`, with the existing Jarvis read-only fallback where configured.
+- **Voice:** OpenAI Realtime voice during the live session. Turn-based replies may use ElevenLabs or browser speech.
+- **Needs:** Realtime-capable OpenAI key, microphone permission, and a compatible browser.
+- **Server endpoint:** `POST /api/realtime_session`.
 
-That's it — press 📡 LIVE and talk.
+## Engine B — ElevenLabs Agents (optional)
 
-## Engine B — ElevenLabs Agents (optional, keeps the ElevenLabs voice)
+Used when the ElevenLabs agent path is configured. It keeps BARS's ElevenLabs voice while the local BARS runtime remains the reasoning backend.
 
-Only used if there's NO OpenAI key but an `elevenlabs.agent_id` is set. Gives the
-full-duplex feel while keeping TARS's ElevenLabs voice, using **TARS's own Claude
-brain** via the token-gated bay below (the server keeps thinking; ElevenLabs does
-ears + mouth). Same pattern as the [[Jarvis]] duplex bay.
+## Local duplex brain
 
-## What's already running
+`server.py` starts an OpenAI-compatible brain at **http://127.0.0.1:4323** (`POST /v1/chat/completions`, streaming supported).
 
-`server.py` starts an OpenAI-compatible brain at **http://127.0.0.1:4323**
-(`POST /v1/chat/completions`, streaming supported), locked behind the Bearer
-token in `tars-duplex.json` (auto-generated, gitignored). TARS persona + dials
-+ long-term memory are applied server-side.
+### Current compatibility filename
 
-**Never tunnel port 4321** (the full assistant). Only 4323 — it exposes exactly
-one token-gated chat route.
+The current runtime still stores its local duplex token in `tars-duplex.json`. This is a legacy internal filename only; the product/agent identity is BARS. Do not rename the file in documentation ahead of the runtime migration, because that would make setup instructions false.
 
-## Setup (one time, ~10 minutes)
+The planned runtime cleanup is:
 
-1. **Tunnel the brain:**
-   `cloudflared tunnel --url http://localhost:4323`
-   → note the `https://….trycloudflare.com` URL.
-2. **ElevenLabs dashboard → Agents → New agent:**
-   - Voice: **Roger** (`CwhRBWXzGAHq8TQ4Fs17`)
-   - LLM: **Custom LLM** → Server URL `https://<tunnel>/v1`,
-     API key = the `token` value from `tars-duplex.json`, model id `tars`.
-   - First message: "TARS online. Talk."
-   - (Requires an ElevenLabs key WITH the Agents scope — same caveat as Jarvis.)
-3. **Paste the agent id** into `config.json → elevenlabs.agent_id`.
-4. Restart TARS. The **📡 LIVE** button appears in the HUD and opens the
-   embedded ElevenLabs call widget — full duplex, barge-in native.
+1. add canonical `bars-duplex.json`, `bars-state.json`, and `bars-memory.md` paths;
+2. read legacy `tars-*` files only as one-time migration fallbacks;
+3. write all new state under `bars-*`;
+4. verify restart/resume behavior;
+5. remove legacy files only after migration proof.
 
-## Custom wake word (Picovoice scaffold — item #13)
+**Do not expose port 4321 publicly.** If remote access is required, expose only the narrow token-gated interface and apply the normal security review.
 
-`config.example.json` has a `picovoice` block. To use a REAL trained
-"Hey TARS" wake word instead of the fuzzy speech-to-text matching:
-get a free access key at console.picovoice.ai, train a "Hey TARS" keyword
-(Porcupine → Web WASM), drop the `.ppn` in `static/`, and fill the block.
-The fuzzy WAKE regex remains the zero-setup fallback.
+## ElevenLabs custom-LLM setup
 
-Related: [[TARS]] · [[Jarvis]] · [[AI Workshop]]
+1. Tunnel only the duplex endpoint you intend to expose, for example `http://localhost:4323`.
+2. In ElevenLabs Agents, configure the custom LLM with the tunnel URL ending in `/v1`.
+3. Until the runtime-path migration lands, use the token from `tars-duplex.json`.
+4. Use model id `bars`.
+5. First message: `BARS online. Talk.`
+6. Save the ElevenLabs agent id to `config.json -> elevenlabs.agent_id` and restart BARS.
+
+## Wake word
+
+`config.example.json` contains the Picovoice scaffold. The intended trained wake phrase is **“Hey BARS”**. Keep the ordinary speech-to-text fallback so the product remains usable without a paid/custom wake-word setup.
+
+Related fleet layers: **BARS · Jarvis · Hermes · Pi · Lightning**.
