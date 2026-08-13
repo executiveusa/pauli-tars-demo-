@@ -1,77 +1,103 @@
-# TARS — Your AI Mission Agent
+# BARS — Culture DJ + Mission Operator
 
-*"Jarvis knows. TARS does."*
+**BARS is the artist-facing operator for Trail Mixx and a bounded execution agent in the Pauli fleet.**
 
-TARS is an autonomous AI employee that lives on your computer. Brief it a mission by voice —
-it deploys agents in the background, builds real apps, sees your screen, takes over your
-mouse to show you things, and reports back out loud with the humor dial wherever you left it.
+BARS combines a 3D interactive character, voice/chat, background missions, computer-use controls, media/music workflows, and Trail Mixx radio operations behind one simple front door.
 
-## Cross-platform (NEW)
+> Jarvis is the presence layer. Hermes orchestrates the business. BARS operates the music/media/computer domain.
+
+## What BARS does
+
+- **Talk + type** — natural chat, voice input, and full-duplex live conversation.
+- **Run bounded missions** — deploy named workers for research/build tasks and report back with evidence.
+- **Computer use** — see the screen and, after explicit permission, control the mouse/keyboard with an emergency stop.
+- **3D interface** — the browser character is the primary product surface and will expose touch-friendly body controls.
+- **Trail Mixx** — BARS is the operator for the Trail Mixx radio/music experience. The station backend stays a separate system and BARS talks to it through a governed adapter rather than absorbing the whole radio codebase.
+- **Music/media adapters** — generation, remix, queue, scheduling, publishing, and analysis are provider-agnostic so the product is not locked to one vendor.
+
+## Cross-platform
 
 | Feature | macOS | Windows | Linux |
-|---------|-------|---------|-------|
+|---|---:|---:|---:|
 | Chat + voice + missions | Yes | Yes | Yes |
-| 3D monolith in browser | Yes | Yes | Yes |
+| 3D character in browser | Yes | Yes | Yes |
 | Jobs board (CASE/KIPP/PLEX) | Yes | Yes | Yes |
-| Floating desktop monolith | Yes (pyobjc) | Yes (PyQt6) | Yes (PyQt6) |
-| Screen takeover (hands) | Yes (Quartz) | Yes (pyautogui) | Limited |
+| Floating desktop character | Yes (pyobjc) | Yes (PyQt6) | Yes (PyQt6) |
+| Screen takeover | Yes (Quartz) | Yes (pyautogui) | Limited |
 | Hue smart lights | Yes | Yes | Yes |
 
 ## Requirements
 
 | What | Why | Required? |
-|---|---|---|
-| **Python 3.10+** | runs the server | Yes |
-| **Anthropic API key** (or OpenRouter) | TARS's brain | Yes |
-| **Claude Code CLI** (`claude`) | powers background missions | Recommended |
-| OpenAI API key | live voice call + dictation | Optional |
-| ElevenLabs API key | premium "Roger" voice | Optional (browser fallback) |
+|---|---|---:|
+| **Python 3.10+** | Runs the local/server runtime | Yes |
+| **Anthropic API key or OpenRouter-compatible route** | Conversational/reasoning brain | Yes for current runtime |
+| **Claude Code CLI** (`claude`) | Powers some background missions | Recommended |
+| OpenAI API key | Live voice + dictation | Optional |
+| ElevenLabs API key | Premium voice | Optional |
 
-### Windows extra dependencies (auto-installed on first run)
-```
+### Windows extras
+
+```bash
 pip install pyautogui mss Pillow PyQt6
 ```
 
-### macOS extra dependencies
-```
+### macOS extras
+
+```bash
 pip install pyobjc-core pyobjc-framework-Quartz
 ```
 
 ## Install
 
 ### Windows
-1. Unzip this folder anywhere (e.g. C:\TARS).
-2. Add your key: duplicate config.example.json, rename to config.json, paste your API key.
-3. Launch: double-click start-tars.bat
-4. Browser opens at http://localhost:4321 — say hello.
+
+1. Put the repo in a folder such as `C:\BARS`.
+2. Copy `config.example.json` to `config.json` and add the provider keys you intend to use.
+3. Double-click `start-bars.bat`.
+4. Open `http://localhost:4321` if the browser does not open automatically.
 
 ### macOS
-1. Unzip this folder anywhere (e.g. ~/TARS).
-2. Add your key: duplicate config.example.json, rename to config.json, paste your key.
-3. Launch: double-click Launch TARS.command
-4. Chrome opens at http://localhost:4321 — grant the mic when asked.
 
-## The 10-second tour
+1. Put the repo in a folder such as `~/BARS`.
+2. Copy `config.example.json` to `config.json` and add the provider keys you intend to use.
+3. Double-click `Launch BARS.command`.
+4. Grant microphone/screen permissions only when you choose to use those features.
 
-- Hands-free — talk naturally; interrupt mid-sentence, he yields.
-- LIVE voice — real-time voice call (~300ms). Share your screen and he watches it.
-- Jobs board — "TARS, send CASE to research X" → agents work in background.
-- BUILD missions — "build me a landing page for..." → real files, auto-opened.
-- TAKEOVER — asks permission, then drives your actual mouse and shows you.
-- Humor & honesty dials — set humor to 75 and see what happens.
+## 10-second tour
+
+- Say or type: **“BARS, show me what you can do.”**
+- Give a mission: **“Send CASE to research X.”**
+- Ask to see the screen: **“BARS, look at my screen.”**
+- Computer takeover always asks permission before driving the real mouse/keyboard.
+- Trail Mixx controls will appear as a dedicated body/touch surface once the adapter is connected and verified.
 
 ## Safety defaults
 
-Missions run draft-safe: TARS never sends emails, posts to social, pushes code, or
-spends money — he prepares drafts and asks. TAKEOVER always asks permission first and
-a red ABORT button stops it instantly. Everything runs locally; your keys never leave config.json.
+BARS is draft-safe by default. Outward actions such as sending, posting, publishing, pushing code, spending money, or taking over the computer require the appropriate confirmation boundary. The red stop/abort control must remain available during computer-use actions.
 
-## Part of The Pauli Effect
+Never commit production secrets. `config.json` and generated local tokens/state are local runtime data.
 
-TARS is one of four agents in the X-Men architecture:
-- Hermes — Orchestrator
-- Cosmos (Pi) — Engineering Lead
-- TARS — Builder
-- Cosmos-II — Brain Keeper
+## Fleet role
 
-MIT licensed. Built by The Pauli Effect.
+The permanent Pauli fleet is:
+
+- **Hermes / Pauli** — business orchestrator and mission delegation.
+- **Pi** — private Human OS / personal second brain.
+- **BARS** — computer, music, media, Trail Mixx, and bounded operator work.
+- **Jarvis** — voice/phone/glasses presence layer.
+- **Lightning** — independent watchdog and memory curator.
+
+Temporary subagents/workers may be created for missions, but they are not additional permanent fleet members.
+
+## Trail Mixx
+
+Canonical source repo: `executiveusa/trail-mixx-source-code` (AzuraCast-based self-hosted radio stack).
+
+BARS should integrate through a thin governed adapter with explicit read/write capabilities such as station health, now-playing, playlists, queue, and scheduling. Do not merge the entire Trail Mixx/AzuraCast codebase into BARS.
+
+## Definition of done
+
+A rendered page or successful HTTP response is not enough. A BARS capability is done only when a real user action reaches the real backend/tool, produces an observable result, records evidence/checkpoints where required, survives the tested failure path, and has a rollback.
+
+Built by The Pauli Effect.
