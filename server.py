@@ -1412,9 +1412,10 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if HANDS and path == "/api/hands":
             HANDS.handle(self, "GET", self.path, None); return
-        if path in ("/", "/index.html"):
+        if path in ("/", "/frontdoor", "/frontdoor.html", "/agent", "/agent/", "/index.html"):
+            page = "frontdoor.html" if path in ("/", "/frontdoor", "/frontdoor.html") else "index.html"
             try:
-                with open(os.path.join(STATIC, "index.html"), "rb") as f:
+                with open(os.path.join(STATIC, page), "rb") as f:
                     body = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1423,7 +1424,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
             except Exception:
-                self._json({"error": "index.html missing"}, 500)
+                self._json({"error": f"{page} missing"}, 500)
         elif path.startswith("/builds/"):
             base = os.path.realpath(os.path.join(ROOT, "builds"))
             rel = path[len("/builds/"):] or ""
@@ -1452,7 +1453,8 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isfile(fp):
                 self._json({"error": "not found"}, 404); return
             ctype = "application/javascript" if name.endswith(".js") else \
-                    "text/css" if name.endswith(".css") else "application/octet-stream"
+                    "text/css" if name.endswith(".css") else \
+                    "text/html; charset=utf-8" if name.endswith(".html") else "application/octet-stream"
             with open(fp, "rb") as f:
                 body = f.read()
             self.send_response(200)
