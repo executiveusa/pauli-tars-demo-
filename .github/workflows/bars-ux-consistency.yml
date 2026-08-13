@@ -26,7 +26,7 @@ jobs:
           s=p.read_text(encoding='utf-8')
           replacements={
             '''const WAKE=/^(?:hey\\s+|okay\\s+|ok\\s+|so\\s+|yo\\s+|a\\s+)*(?:bars|tarz|tar'?s|tarts?|barse|barsh|tarus|taurus|stars?|cars|tas|tar)\\b[,.!:?\\s]*(.*)$/i;''':
-            '''const WAKE=/^(?:hey\\s+|okay\\s+|ok\\s+|so\\s+|yo\\s+|a\\s+)*(?:bars|barz|bar'?s|barrs?|tars|tarz|tar'?s)\\b[,.!:?\\s]*(.*)$/i;''',
+            '''const WAKE=/^(?:hey\\s+|okay\\s+|ok\\s+|so\\s+|yo\\s+|a\\s+)*(?:bars|barz|bar'?s|barrs?|bards?)\\b[,.!:?\\s]*(.*)$/i;''',
             '''The movie dials, for real: they rewrite his personality live. Honesty 90% = blunt debriefs, no flattery. Humor 100% = a joke in everything. They shape chat, mission reports and how he behaves on stage.''':
             '''Flavor controls how expressive BARS is. Authenticity controls how direct the feedback is. The dials update chat, mission reports and stage behavior immediately.''',
             '''My settings. Flavor and authenticity. Dial them wherever you can handle. Ninety percent honesty is the factory setting for a reason.''':
