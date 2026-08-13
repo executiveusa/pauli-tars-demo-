@@ -22,9 +22,37 @@ except Exception:
 STATIC = os.path.join(ROOT, "static")
 MISSIONS_DIR = os.path.join(ROOT, "missions")
 WORKBENCH = os.path.join(ROOT, "workbench")
-STATE_PATH = os.path.join(ROOT, "tars-state.json")
-MEMORY_PATH = os.path.join(ROOT, "tars-memory.md")
-DUPLEX_PATH = os.path.join(ROOT, "tars-duplex.json")
+STATE_PATH = os.path.join(ROOT, "bars-state.json")
+MEMORY_PATH = os.path.join(ROOT, "bars-memory.md")
+DUPLEX_PATH = os.path.join(ROOT, "bars-duplex.json")
+LEGACY_STATE_PATH = os.path.join(ROOT, "tars-state.json")
+LEGACY_MEMORY_PATH = os.path.join(ROOT, "tars-memory.md")
+LEGACY_DUPLEX_PATH = os.path.join(ROOT, "tars-duplex.json")
+
+def _read_path(primary, legacy):
+    return primary if os.path.exists(primary) else (legacy if os.path.exists(legacy) else primary)
+
+def _migrate_legacy_file(primary, legacy):
+    """Copy legacy state once; never delete or overwrite the legacy file."""
+    if os.path.exists(primary) or not os.path.exists(legacy):
+        return
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".bars-migrate-", dir=ROOT)
+        os.close(fd)
+        shutil.copyfile(legacy, tmp)
+        os.replace(tmp, primary)
+    except Exception:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
+                          (MEMORY_PATH, LEGACY_MEMORY_PATH),
+                          (DUPLEX_PATH, LEGACY_DUPLEX_PATH)):
+    _migrate_legacy_file(_primary, _legacy)
 PORT = 4321
 DUPLEX_PORT = 4323
 MISSION_TIMEOUT = 900  # seconds
@@ -88,8 +116,22 @@ CONFIG = load_config()
 hue.init(CONFIG["hue"], ROOT)
 
 def duplex_token():
+    source = _read_path(DUPLEX_PATH, LEGACY_DUPLEX_PATH)
     try:
-        return json.load(open(DUPLEX_PATH))["token"]
+        tok = json.load(open(source))["token"]
+        if source != DUPLEX_PATH:
+            fd, tmp = tempfile.mkstemp(prefix=".bars-duplex-", dir=ROOT)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump({"token": tok, "_use": "Bearer token for the OpenAI-compatible "
+                               f"duplex brain on port {DUPLEX_PORT} — see DUPLEX.md"}, f, indent=1)
+                os.replace(tmp, DUPLEX_PATH)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        return tok
     except Exception:
         tok = uuid.uuid4().hex + uuid.uuid4().hex[:8]
         with open(DUPLEX_PATH, "w") as f:
@@ -111,7 +153,7 @@ def remember(text):
 
 def mem_block():
     try:
-        with open(MEMORY_PATH) as f:
+        with open(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH)) as f:
             tail = f.read()[-2500:]
         if not tail.strip():
             return ""
@@ -146,7 +188,7 @@ def jobs_block():
 STATE_LOCK = threading.Lock()
 
 def load_state():
-    s = _load_json(STATE_PATH)
+    s = _load_json(_read_path(STATE_PATH, LEGACY_STATE_PATH))
     return {"humor": int(s.get("humor", 75)), "honesty": int(s.get("honesty", 90)),
             "trust": s.get("trust", "draft-safe")}
 
@@ -305,7 +347,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         if sb:
             try:
-                u = sb.record_llm(agent="tars", model=str(model), response_json=data, task_id="tars-chat")
+                u = sb.record_llm(agent="bars", model=str(model), response_json=data, task_id="bars-chat")
                 LAST_USAGE.update({
                     "tokens_in": u.get("tokens_in", 0),
                     "tokens_out": u.get("tokens_out", 0),
@@ -330,7 +372,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     txt = "".join(b.get("text", "") for b in data.get("content", []))
     if sb:
         try:
-            u = sb.record_llm(agent="tars", model=str(CONFIG["model"]), response_json=data, task_id="tars-chat")
+            u = sb.record_llm(agent="bars", model=str(CONFIG["model"]), response_json=data, task_id="bars-chat")
             LAST_USAGE.update({
                 "tokens_in": u.get("tokens_in", 0),
                 "tokens_out": u.get("tokens_out", 0),
@@ -755,7 +797,9 @@ DISALLOWED = ["Bash", "Write", "Edit", "NotebookEdit", "Task", "KillShell", "mcp
 # safe:True  → research-grade, available on ANY mission (OPS/BUILD, strict config)
 # safe:False → acts on the outside world, ONLY on confirmed ACT missions ("do it")
 # auth: none | key (env inputs in the panel) | oauth (one-time `claude mcp add` + /mcp)
-TOOLS_PATH = os.path.join(ROOT, "tars-tools.json")
+TOOLS_PATH = os.path.join(ROOT, "bars-tools.json")
+LEGACY_TOOLS_PATH = os.path.join(ROOT, "tars-tools.json")
+_migrate_legacy_file(TOOLS_PATH, LEGACY_TOOLS_PATH)
 TOOL_CATALOG = {
     # -------- research-safe --------
     "deepwiki":   {"name": "DeepWiki", "domain": "deepwiki.com", "safe": True, "auth": "none",
@@ -865,7 +909,7 @@ TOOL_CATALOG = {
 TOOLS_LOCK = threading.Lock()
 
 def tools_installed():
-    return (_load_json(TOOLS_PATH) or {}).get("installed", {})
+    return (_load_json(_read_path(TOOLS_PATH, LEGACY_TOOLS_PATH)) or {}).get("installed", {})
 
 def tools_save(installed):
     with TOOLS_LOCK:
@@ -979,7 +1023,7 @@ def _auth_worker(tid):
     try:
         send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "tars", "version": "1.0"}}})
+            "clientInfo": {"name": "bars", "version": "1.0"}}})
         sent_after_init = False
         while time.time() < deadline:
             if TOOL_AUTH.get(tid, {}).get("status") == "failed":
@@ -1362,7 +1406,7 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("[tars] %s\n" % (fmt % args))
+        sys.stderr.write("[bars] %s\n" % (fmt % args))
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -1993,14 +2037,14 @@ class DuplexHandler(BaseHTTPRequestHandler):
             self.end_headers()
             for delta in ({"role": "assistant"}, {"content": reply}):
                 chunk = {"id": rid, "object": "chat.completion.chunk",
-                         "model": "tars", "choices": [{"index": 0, "delta": delta,
+                         "model": "bars", "choices": [{"index": 0, "delta": delta,
                                                        "finish_reason": None}]}
                 self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
-            end = {"id": rid, "object": "chat.completion.chunk", "model": "tars",
+            end = {"id": rid, "object": "chat.completion.chunk", "model": "bars",
                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
             self.wfile.write(f"data: {json.dumps(end)}\n\ndata: [DONE]\n\n".encode())
         else:
-            body = json.dumps({"id": rid, "object": "chat.completion", "model": "tars",
+            body = json.dumps({"id": rid, "object": "chat.completion", "model": "bars",
                                "choices": [{"index": 0, "finish_reason": "stop",
                                             "message": {"role": "assistant",
                                                         "content": reply}}]}).encode()
