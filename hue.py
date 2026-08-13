@@ -2,9 +2,11 @@
 
 Amber wash while he speaks, red flash on a failed sortie, amber blink on
 mission complete, brief flare on deploy. Local bridge v1 API, stdlib only.
-Silent no-op without a bridge. Pairing state: tars-hue.json — and if absent,
-falls back READ-ONLY to Jarvis's jarvis-hue.json so an already-paired bridge
-just works (same one-place-to-pair rule as the API keys).
+Silent no-op without a bridge.
+
+Canonical pairing state: bars-hue.json.
+Migration compatibility: if bars-hue.json is absent, read legacy tars-hue.json
+or Jarvis's jarvis-hue.json without modifying them.
 """
 import json, os, threading, urllib.request
 
@@ -27,7 +29,12 @@ def init(cfg, root):
 
 
 def _stored():
-    for path in (os.path.join(_ROOT, "tars-hue.json"), _JARVIS_HUE):
+    paths = (
+        os.path.join(_ROOT, "bars-hue.json"),
+        os.path.join(_ROOT, "tars-hue.json"),  # legacy read-only migration fallback
+        _JARVIS_HUE,
+    )
+    for path in paths:
         try:
             if os.path.exists(path):
                 return json.load(open(path))
