@@ -1,6 +1,21 @@
 config.json
+
+# BARS runtime state / private local data
+bars-state.json
+bars-memory.md
+bars-duplex.json
+bars-tools.json
+bars-hue.json
+
+# Legacy TARS runtime state retained only for read/migration compatibility
 tars-state.json
+tars-memory.md
+tars-duplex.json
+tars-tools.json
+tars-hue.json
+
 presence.log
+server.log
 .deps_installed
 __pycache__/
 *.pyc
