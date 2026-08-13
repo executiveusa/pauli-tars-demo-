@@ -20,8 +20,8 @@ required = [
     'data-action="build"',
     'data-action="jobs"',
     'data-action="status"',
-    'getJSON("/api/status")',
-    'getJSON("/missions")',
+    'getJSON("/api/status",req.controller.signal)',
+    'getJSON("/missions",req.controller.signal)',
     "NOT CONNECTED YET",
     "prefers-reduced-motion",
     "touchmove",
@@ -36,7 +36,8 @@ for forbidden in ('"/brief"', '"/abort"', '"/act"', '"/tools"'):
     assert forbidden not in HTML, f"frontdoor unexpectedly references write endpoint: {forbidden}"
 
 assert not re.search(r"\btars\b", HTML, re.I), "legacy TARS product copy leaked into the BARS front door"
-print("BARS front door contract: PASS")
 
 assert '"/agent"' in SERVER and 'frontdoor.html' in SERVER, "server must route public front door and /agent cockpit"
-assert '"text/html; charset=utf-8" if name.endswith(".html")' in SERVER, "static HTML must render as text/html"
+assert 'self.send_header("Content-Type", "text/html; charset=utf-8")' in SERVER, "static HTML must render as text/html"
+assert "AbortController" in HTML and "8000" in HTML and "isCurrent(req)" in HTML, "live requests must be bounded and stale-safe"
+print("BARS front door contract: PASS")
