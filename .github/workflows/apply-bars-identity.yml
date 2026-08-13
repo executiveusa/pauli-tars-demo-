@@ -1,4 +1,4 @@
-name: Apply BARS identity migration
+name: Verify BARS identity migration
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  migrate:
-    if: ${{ !contains(github.event.head_commit.message, '[bars-patch]') }}
+  verify:
+    if: ${{ !contains(github.event.head_commit.message, '[bars-verify]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,20 +19,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Apply inspected migration
-        run: python scripts/apply_bars_identity_migration.py
+      - name: Repair known substring collision
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('static/index.html')
+          s = p.read_text(encoding='utf-8')
+          s2 = s.replace('sbars', 'stars')
+          if s2 != s:
+              p.write_text(s2, encoding='utf-8')
+              print('Restored starfield identifiers after BARS symbol migration.')
+          else:
+              print('No starfield collision found.')
+          PY
       - name: Check product identity
         run: python scripts/check_bars_identity.py
       - name: Syntax check runtime
         run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py
-      - name: Commit deterministic patch
+      - name: Commit verified cleanup
         run: |
           if git diff --quiet; then
-            echo 'No migration changes required.'
+            echo 'No cleanup changes required.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add server.py static/index.html
-          git commit -m '[bars-patch] Apply verified BARS identity migration'
+          git add static/index.html
+          git commit -m '[bars-verify] Repair rename collateral and verify BARS identity'
           git push origin HEAD:fix/bars-identity-proof
