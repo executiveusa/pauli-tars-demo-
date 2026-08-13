@@ -32,7 +32,6 @@ old_jobs = 'async function jobs(){showCard("LIVE JOBS","Reading BARS mission sta
 new_jobs = 'async function jobs(){const req=beginLiveRequest();showCard("LIVE JOBS","Reading BARS mission state…");try{const j=await getJSON("/missions",req.controller.signal);if(!isCurrent(req))return;const m=Array.isArray(j.missions)?j.missions:[],run=m.filter(x=>x.status==="EN ROUTE");const last=m.slice().sort((a,b)=>(b.t_start||0)-(a.t_start||0))[0];cardBody.innerHTML=run.length?`<b style="color:var(--amber)">${run.length} active job${run.length===1?\'\':\'s\'}</b><br>${run.slice(0,3).map(x=>`${safe(x.agent||\'CASE\')} · ${safe(x.brief||\'Untitled\')}`).join(\'<br>\')}`:`No active jobs right now.${last?`<br><br>Last: <b>${safe(last.status)}</b> · ${safe(last.brief||\'Untitled\')}`:\'\'}`;cardMeta.textContent=`Source: /missions · ${m.length} total visible`;cardActions.innerHTML=\'<a class="go" href="/agent">OPEN JOB BOARD ↗</a>\'}catch(e){if(!isCurrent(req))return;showCard("JOBS UNAVAILABLE",safe(e.name==="AbortError"?"Request timed out":e.message),"No job count was fabricated.",\'<a class="go" href="/agent">OPEN AGENT ↗</a>\')}}'
 front = replace_once(front, old_jobs, new_jobs, "jobs request lifecycle")
 
-# Any non-live action invalidates an in-flight status/jobs request before changing the card.
 old_trail = 'function trail(){showCard("TRAIL MIXX","BARS is the planned operator for Trail Mixx, but this front door does not claim a live radio adapter until the backend proves one.","Phase 3 gate: real station read → evidence → then write controls.",\'<button onclick="card.classList.remove(\\\'on\\\')">NOT CONNECTED YET</button>\')}'
 new_trail = 'function trail(){if(liveRequest)liveRequest.abort();liveGeneration++;showCard("TRAIL MIXX","BARS is the planned operator for Trail Mixx, but this front door does not claim a live radio adapter until the backend proves one.","Phase 3 gate: real station read → evidence → then write controls.",\'<button onclick="card.classList.remove(\\\'on\\\')">NOT CONNECTED YET</button>\')}'
 front = replace_once(front, old_trail, new_trail, "invalidate live request on trail card")
@@ -40,6 +39,8 @@ front = replace_once(front, old_trail, new_trail, "invalidate live request on tr
 FRONT.write_text(front, encoding="utf-8")
 
 verify = VERIFY.read_text(encoding="utf-8")
+verify = verify.replace('    \'getJSON("/api/status")\',\n', '    \'getJSON("/api/status",req.controller.signal)\',\n')
+verify = verify.replace('    \'getJSON("/missions")\',\n', '    \'getJSON("/missions",req.controller.signal)\',\n')
 verify = replace_once(
     verify,
     'assert not re.search(r"\\btars\\b", HTML, re.I), "legacy TARS product copy leaked into the BARS front door"\nprint("BARS front door contract: PASS")\n\nassert \'"/agent"\' in SERVER and \'frontdoor.html\' in SERVER, "server must route public front door and /agent cockpit"\nassert \'"text/html; charset=utf-8" if name.endswith(".html")\' in SERVER, "static HTML must render as text/html"',
