@@ -1,17 +1,17 @@
 @echo off
 REM ============================================================
-REM  TARS — Mission Agent (Windows Launcher)
-REM  Double-click this file to start TARS.
+REM  BARS — Culture DJ + Mission Operator (Windows Launcher)
+REM  Double-click this file to start BARS.
 REM  Opens automatically at http://localhost:4321
 REM ============================================================
 
 cd /d "%~dp0"
 
 echo.
-echo  ╔══════════════════════════════════════╗
-echo  ║         TARS — Mission Agent          ║
-echo  ║      The Pauli Effect Studios         ║
-echo  ╚══════════════════════════════════════╝
+echo  ========================================
+echo           BARS - Mission Operator
+echo          The Pauli Effect Studios
+echo  ========================================
 echo.
 
 REM Check Python is installed
@@ -30,8 +30,8 @@ if not exist ".deps_installed" (
     pip install pyautogui mss Pillow PyQt6 --quiet
     if errorlevel 1 (
         echo  [WARNING] Some dependencies failed to install.
-        echo  TARS will run but screen takeover and desktop monolith may not work.
-        echo  Core features (chat, voice, missions) will still function.
+        echo  BARS will run, but screen takeover and the desktop character may not work.
+        echo  Core chat, voice, and mission features can still function.
         echo.
     )
     echo done > .deps_installed
@@ -43,12 +43,12 @@ if not exist "config.json" (
     if exist "config.example.json" (
         echo  [SETUP] No config.json found. Copying from config.example.json...
         copy config.example.json config.json >nul
-        echo  [SETUP] Edit config.json and add your API keys, then re-run.
+        echo  [SETUP] Edit config.json and add the provider keys you intend to use, then re-run.
         echo.
     )
 )
 
-echo  Starting TARS...
+echo  Starting BARS...
 echo  Browser will open automatically at http://localhost:4321
 echo  Press Ctrl+C to stop.
 echo.
