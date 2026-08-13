@@ -1,0 +1,58 @@
+name: BARS interaction language consistency
+
+on:
+  push:
+    branches: [fix/bars-identity-proof]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[bars-ux]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/bars-identity-proof
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact interaction copy fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('static/index.html')
+          s=p.read_text(encoding='utf-8')
+          replacements={
+            '''const WAKE=/^(?:hey\\s+|okay\\s+|ok\\s+|so\\s+|yo\\s+|a\\s+)*(?:bars|tarz|tar'?s|tarts?|barse|barsh|tarus|taurus|stars?|cars|tas|tar)\\b[,.!:?\\s]*(.*)$/i;''':
+            '''const WAKE=/^(?:hey\\s+|okay\\s+|ok\\s+|so\\s+|yo\\s+|a\\s+)*(?:bars|barz|bar'?s|barrs?|tars|tarz|tar'?s)\\b[,.!:?\\s]*(.*)$/i;''',
+            '''The movie dials, for real: they rewrite his personality live. Honesty 90% = blunt debriefs, no flattery. Humor 100% = a joke in everything. They shape chat, mission reports and how he behaves on stage.''':
+            '''Flavor controls how expressive BARS is. Authenticity controls how direct the feedback is. The dials update chat, mission reports and stage behavior immediately.''',
+            '''My settings. Flavor and authenticity. Dial them wherever you can handle. Ninety percent honesty is the factory setting for a reason.''':
+            '''My settings. Flavor and authenticity. Dial them wherever you can handle. Ninety percent authenticity is the factory setting for a reason.''',
+            '''/\\b(humou?r|honesty|personality)\\b/i.test(text)''':
+            '''/\\b(humou?r|flavou?r|honesty|authenticity|personality)\\b/i.test(text)''',
+            '''const dm=text.match(/\\b(humou?r|honesty)\\b[^0-9%]*?(\\d{1,3})\\s*(?:percent|%)?\\b/i);''':
+            '''const dm=text.match(/\\b(humou?r|flavou?r|honesty|authenticity)\\b[^0-9%]*?(\\d{1,3})\\s*(?:percent|%)?\\b/i);''',
+            '''setDialTo(dm[1].toLowerCase().startsWith("humo")?"humor":"honesty",+dm[2]);return;}''':
+            '''setDialTo(/^(?:humo|flavo)/i.test(dm[1])?"humor":"honesty",+dm[2]);return;}'''
+          }
+          for old,new in replacements.items():
+              n=s.count(old)
+              if n!=1:
+                  raise SystemExit(f'expected one match, found {n}: {old[:70]}')
+              s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Verify identity and syntax
+        run: |
+          python scripts/check_bars_identity.py
+          python -m py_compile server.py bars_router.py hue.py hands.py presence.py
+      - name: Commit UX consistency fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add static/index.html
+          git commit -m '[bars-ux] Align BARS voice commands and interaction language'
+          git push origin HEAD:fix/bars-identity-proof
