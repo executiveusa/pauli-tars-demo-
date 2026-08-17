@@ -28,6 +28,15 @@ def _request(path, method="GET", body=None, timeout=15):
         return json.loads(raw.decode("utf-8") or "{}")
 
 
+def _terminal(status):
+    raw = str(status or "").strip().upper()
+    if raw in {"DONE", "COMPLETED", "COMPLETE", "SUCCESS"}:
+        return "done"
+    if raw in {"FAILED", "ERROR", "ABORTED", "CANCELLED"}:
+        return "failed" if raw not in {"ABORTED", "CANCELLED"} else "cancelled"
+    return "working"
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, payload, status=200):
         raw = json.dumps(payload).encode("utf-8")
@@ -50,22 +59,54 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
-        if self.path.rstrip("/") != "/health":
-            self._json({"error": "not found"}, 404)
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path == "/health":
+            try:
+                status = _request("/api/status", timeout=5)
+                self._json({
+                    "ok": bool(status.get("ok")),
+                    "agent": "bars",
+                    "role": "operator",
+                    "bars": status,
+                }, 200 if status.get("ok") else 503)
+            except Exception as exc:
+                self._json({"ok": False, "agent": "bars", "error": str(exc)[:300]}, 503)
             return
-        try:
-            status = _request("/api/status", timeout=5)
-            self._json({
-                "ok": bool(status.get("ok")),
-                "agent": "bars",
-                "role": "operator",
-                "bars": status,
-            }, 200 if status.get("ok") else 503)
-        except Exception as exc:
-            self._json({"ok": False, "agent": "bars", "error": str(exc)[:300]}, 503)
+
+        prefix = "/api/terabithia/status/"
+        if path.startswith(prefix):
+            bars_mission_id = path[len(prefix):].strip()
+            if not bars_mission_id or "/" in bars_mission_id or ".." in bars_mission_id:
+                self._json({"error": "invalid mission id"}, 400)
+                return
+            try:
+                mission = _request(f"/mission/{bars_mission_id}", timeout=10)
+                mapped = _terminal(mission.get("status"))
+                report = (mission.get("report") or mission.get("debrief") or "").strip()
+                evidence = [
+                    {"type": "external_state", "ref": f"bars://mission/{bars_mission_id}", "summary": str(mission.get("status") or "BARS state")}
+                ]
+                if report:
+                    evidence.append({"type": "artifact", "ref": f"bars://mission/{bars_mission_id}/report", "summary": report[:500]})
+                self._json({
+                    "bars_mission_id": bars_mission_id,
+                    "status": mapped,
+                    "raw_status": mission.get("status"),
+                    "summary": report[:2000] or f"BARS mission {bars_mission_id} is {mission.get('status', 'in progress')}.",
+                    "evidence": evidence,
+                    "failures": [report[:500]] if mapped == "failed" and report else [],
+                    "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) if mapped in {"done", "failed", "cancelled"} else None,
+                })
+            except urllib.error.HTTPError as exc:
+                self._json({"error": f"BARS returned HTTP {exc.code}"}, 404 if exc.code == 404 else 502)
+            except Exception as exc:
+                self._json({"error": str(exc)[:300]}, 502)
+            return
+
+        self._json({"error": "not found"}, 404)
 
     def do_POST(self):
-        if self.path.rstrip("/") != "/api/terabithia/invoke":
+        if self.path.split("?", 1)[0].rstrip("/") != "/api/terabithia/invoke":
             self._json({"error": "not found"}, 404)
             return
 
@@ -101,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
                 "human_blocker": None,
                 "handoff": None,
                 "memory_candidate": None,
-                "next_action": f"Poll BARS mission {bars_mission_id} for completion evidence.",
+                "next_action": f"Poll /api/terabithia/status/{bars_mission_id} for completion evidence.",
                 "completed_at": None,
                 "runtime": {"bars_mission_id": bars_mission_id, "dispatch_ms": int((time.time() - started) * 1000)},
             }, 202)
