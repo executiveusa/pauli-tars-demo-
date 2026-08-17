@@ -1,5 +1,5 @@
 #!/bin/bash
-# BARS — double-click launcher. Starts the server and opens Chrome.
+# BARS — double-click launcher. Starts the cockpit and its Terabithia adapter.
 cd "$(dirname "$0")"
 
 if [ ! -f config.json ]; then
@@ -16,6 +16,15 @@ else
   echo "Launching BARS on http://localhost:4321 ..."
   nohup python3 server.py > server.log 2>&1 &
   sleep 2
+fi
+
+# Terabithia gets a narrow fleet contract on a separate loopback-only port.
+if lsof -tnP -iTCP:4324 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Terabithia adapter is already running."
+else
+  echo "Launching BARS Terabithia adapter on http://127.0.0.1:4324 ..."
+  nohup python3 terabithia_adapter.py > terabithia-adapter.log 2>&1 &
+  sleep 1
 fi
 
 # Chrome currently gives the best mic + screen-share support.
