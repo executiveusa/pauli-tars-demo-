@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>BARS — Terabithia Operator Demo</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111;background:#f6f6f2}*{box-sizing:border-box}body{margin:0}.wrap{max-width:980px;margin:auto;padding:32px 20px 64px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:54px}.brand{font-weight:900;letter-spacing:-.04em;font-size:26px}.pill{font-size:12px;padding:8px 12px;border:1px solid #c9c9c1;border-radius:999px;background:#fff}.hero h1{font-size:clamp(44px,8vw,88px);line-height:.9;letter-spacing:-.065em;margin:0 0 24px;max-width:900px}.hero p{font-size:20px;line-height:1.5;max-width:700px;color:#555;margin:0 0 34px}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;margin-top:28px}.card{background:white;border:1px solid #deded7;border-radius:22px;padding:22px;box-shadow:0 10px 30px rgba(0,0,0,.04)}label{display:block;font-weight:700;margin-bottom:10px}textarea{width:100%;min-height:150px;resize:vertical;border:1px solid #d6d6cf;border-radius:14px;padding:14px;font:inherit;background:#fbfbf8}button{border:0;border-radius:999px;padding:13px 18px;font-weight:800;cursor:pointer;background:#111;color:#fff;margin-top:12px}.secondary{background:#efefe9;color:#111;margin-left:8px}.status{display:flex;align-items:center;gap:8px;font-weight:800}.dot{width:9px;height:9px;border-radius:50%;background:#999}.dot.ok{background:#16a34a}.flow{display:grid;gap:10px;margin-top:18px}.step{padding:12px 14px;border-radius:12px;background:#f4f4ef;font-size:14px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;background:#111;color:#eaeaea;border-radius:14px;padding:16px;min-height:140px;margin-top:14px}.note{font-size:12px;color:#73736b;margin-top:12px;line-height:1.45}.kicker{font-size:13px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px;color:#666}@media(max-width:760px){.grid{grid-template-columns:1fr}.top{margin-bottom:34px}.hero p{font-size:17px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><div class="brand">BARS</div><div class="pill">Terabithia Fleet Bus v1</div></div>
+  <section class="hero">
+    <div class="kicker">Operator demo</div>
+    <h1>Give the mission.<br>BARS routes the work.</h1>
+    <p>This live demo proves the governed web path from Terabithia authority into BARS mission intake and receipt generation. It does not falsely claim host-computer execution.</p>
+  </section>
+  <div class="grid">
+    <div class="card">
+      <label for="mission">Mission</label>
+      <textarea id="mission">Open the assigned project, inspect the current state, and return evidence before changing anything.</textarea>
+      <button id="send">Send to BARS</button><button id="sample" class="secondary">Load sample</button>
+      <div id="out" class="mono">Ready for a mission.</div>
+    </div>
+    <div class="card">
+      <div id="health" class="status"><span class="dot" id="dot"></span><span>Checking BARS…</span></div>
+      <div class="flow">
+        <div class="step"><b>1.</b> Terabithia owns mission authority</div>
+        <div class="step"><b>2.</b> BARS accepts governed operator work</div>
+        <div class="step"><b>3.</b> Receipt returns truthful execution state</div>
+      </div>
+      <div class="note">Demo mode: mission intake and routing receipt are live on Vercel. Host execution remains detached until a BARS runtime is connected.</div>
+    </div>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);const out=$('#out');
+async function health(){try{const r=await fetch('/api/status');const j=await r.json();if(j.ok){$('#dot').classList.add('ok');$('#health span:last-child').textContent='BARS web demo online';}}catch(e){$('#health span:last-child').textContent='Status unavailable';}}
+$('#send').onclick=async()=>{const mission=$('#mission').value.trim();if(!mission)return;out.textContent='Routing mission…';try{const r=await fetch('/api/mission',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mission})});const j=await r.json();out.textContent=JSON.stringify(j,null,2);}catch(e){out.textContent='Mission request failed: '+e.message;}};
+$('#sample').onclick=()=>{$('#mission').value='Inspect the target system, identify the single highest-impact blocker, and return evidence plus the next safe action.'};
+health();
+</script>
+</body>
+</html>
