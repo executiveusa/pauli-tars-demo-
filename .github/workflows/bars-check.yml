@@ -19,4 +19,10 @@ jobs:
       - name: Identity regression
         run: python scripts/check_bars_identity.py
       - name: Runtime syntax
-        run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py
+        run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py terabithia_adapter.py remote_bridge.py
+      - name: Launcher syntax
+        run: bash -n 'Launch BARS.command'
+      - name: Secret regression
+        run: |
+          test ! -f tars-duplex.json
+          test ! -f bars-duplex.json
