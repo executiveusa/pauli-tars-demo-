@@ -19,7 +19,9 @@ jobs:
       - name: Identity regression
         run: python scripts/check_bars_identity.py
       - name: Runtime syntax
-        run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py terabithia_adapter.py remote_bridge.py
+        run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py terabithia_adapter.py remote_bridge.py scripts/test_remote_bridge.py
+      - name: Remote mission contract proof
+        run: python scripts/test_remote_bridge.py
       - name: Launcher syntax
         run: bash -n 'Launch BARS.command'
       - name: Secret regression
