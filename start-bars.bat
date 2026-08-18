@@ -48,6 +48,14 @@ if not exist "config.json" (
     )
 )
 
+REM Remote operation is outbound-only and stays disabled unless explicitly configured.
+if defined TERABITHIA_REMOTE_URL if defined TERABITHIA_API_KEY (
+    echo  Starting outbound BARS remote bridge...
+    start "BARS Remote Bridge" /min python remote_bridge.py
+) else (
+    echo  Remote bridge disabled - TERABITHIA_REMOTE_URL / TERABITHIA_API_KEY not set.
+)
+
 echo  Starting BARS...
 echo  Browser will open automatically at http://localhost:4321
 echo  Press Ctrl+C to stop.
