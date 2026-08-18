@@ -12,33 +12,35 @@
 <div class="wrap">
   <div class="top"><div class="brand">BARS</div><div class="pill">Terabithia Fleet Bus v1</div></div>
   <section class="hero">
-    <div class="kicker">Operator demo</div>
-    <h1>Give the mission.<br>BARS routes the work.</h1>
-    <p>This live demo proves the governed web path from Terabithia authority into BARS mission intake and receipt generation. It does not falsely claim host-computer execution.</p>
+    <div class="kicker">Remote mission proof v1</div>
+    <h1>Give the mission.<br>BARS returns the proof.</h1>
+    <p>The web front door creates a governed Terabithia mission when the remote control plane is configured, then polls until BARS returns terminal evidence. Without that wiring it stays explicitly in demo mode.</p>
   </section>
   <div class="grid">
     <div class="card">
-      <label for="mission">Mission</label>
-      <textarea id="mission">Open the assigned project, inspect the current state, and return evidence before changing anything.</textarea>
+      <label for="mission">Read-only proof mission</label>
+      <textarea id="mission">Inspect the assigned project, summarize the current state, and return evidence.</textarea>
       <button id="send">Send to BARS</button><button id="sample" class="secondary">Load sample</button>
       <div id="out" class="mono">Ready for a mission.</div>
     </div>
     <div class="card">
       <div id="health" class="status"><span class="dot" id="dot"></span><span>Checking BARS…</span></div>
       <div class="flow">
-        <div class="step"><b>1.</b> Terabithia owns mission authority</div>
-        <div class="step"><b>2.</b> BARS accepts governed operator work</div>
-        <div class="step"><b>3.</b> Receipt returns truthful execution state</div>
+        <div class="step"><b>1.</b> Terabithia creates canonical mission truth</div>
+        <div class="step"><b>2.</b> BARS polls outward and claims read-only work</div>
+        <div class="step"><b>3.</b> Terminal evidence returns to the mission receipt</div>
       </div>
-      <div class="note">Demo mode: mission intake and routing receipt are live on Vercel. Host execution remains detached until a BARS runtime is connected.</div>
+      <div class="note" id="modeNote">Checking whether the remote control plane is configured.</div>
     </div>
   </div>
 </div>
 <script>
 const $=s=>document.querySelector(s);const out=$('#out');
-async function health(){try{const r=await fetch('/api/status');const j=await r.json();if(j.ok){$('#dot').classList.add('ok');$('#health span:last-child').textContent='BARS web demo online';}}catch(e){$('#health span:last-child').textContent='Status unavailable';}}
-$('#send').onclick=async()=>{const mission=$('#mission').value.trim();if(!mission)return;out.textContent='Routing mission…';try{const r=await fetch('/api/mission',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mission})});const j=await r.json();out.textContent=JSON.stringify(j,null,2);}catch(e){out.textContent='Mission request failed: '+e.message;}};
-$('#sample').onclick=()=>{$('#mission').value='Inspect the target system, identify the single highest-impact blocker, and return evidence plus the next safe action.'};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function health(){try{const r=await fetch('/api/status');const j=await r.json();if(j.ok){$('#dot').classList.add('ok');$('#health span:last-child').textContent=j.remoteControlPlaneConfigured?'BARS remote control plane ready':'BARS web demo online';$('#modeNote').textContent=j.remoteControlPlaneConfigured?'Remote queue is configured. Host execution is still only true after terminal evidence returns.':'Demo mode only: configure Terabithia URL/key on Vercel and the worker token on the BARS host to attach execution.';}}catch(e){$('#health span:last-child').textContent='Status unavailable';}}
+async function pollMission(id){for(let i=0;i<120;i++){await sleep(1000);const r=await fetch('/api/mission-status?missionId='+encodeURIComponent(id));const j=await r.json();out.textContent=JSON.stringify(j,null,2);if(!r.ok||j.terminal)return j;}return {ok:false,error:'status polling timed out'};}
+$('#send').onclick=async()=>{const mission=$('#mission').value.trim();if(!mission)return;out.textContent='Routing mission…';try{const r=await fetch('/api/mission',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mission})});const j=await r.json();out.textContent=JSON.stringify(j,null,2);if(r.ok&&j.mode==='remote'&&j.missionId)await pollMission(j.missionId);}catch(e){out.textContent='Mission request failed: '+e.message;}};
+$('#sample').onclick=()=>{$('#mission').value='Inspect the target page, summarize what is present, and return evidence plus the single highest-impact blocker.'};
 health();
 </script>
 </body>
