@@ -28,8 +28,8 @@ else
 fi
 
 # Remote operation is outbound-only. Nothing is exposed inbound on this machine.
-# The bridge stays disabled unless both variables are explicitly configured.
-if [ -n "$TERABITHIA_REMOTE_URL" ] && [ -n "$TERABITHIA_API_KEY" ]; then
+# The worker uses a dedicated token, separate from the Terabithia authority key.
+if [ -n "$TERABITHIA_REMOTE_URL" ] && [ -n "$BARS_REMOTE_TOKEN" ]; then
   if pgrep -f "[p]ython3 remote_bridge.py" >/dev/null 2>&1; then
     echo "BARS remote bridge is already running."
   else
@@ -38,7 +38,7 @@ if [ -n "$TERABITHIA_REMOTE_URL" ] && [ -n "$TERABITHIA_API_KEY" ]; then
     sleep 1
   fi
 else
-  echo "Remote bridge disabled (TERABITHIA_REMOTE_URL / TERABITHIA_API_KEY not set)."
+  echo "Remote bridge disabled (TERABITHIA_REMOTE_URL / BARS_REMOTE_TOKEN not set)."
 fi
 
 # Chrome currently gives the best mic + screen-share support.
