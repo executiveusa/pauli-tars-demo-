@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Outbound-only remote mission bridge for BARS.
 
-Polls Terabithia for a queued BARS mission, claims it, dispatches it to the
-local BARS runtime, polls local completion, and reports truthful evidence back.
-No inbound Internet listener is opened on the user's computer.
+Polls Terabithia for a queued BARS mission, claims it, dispatches a bounded
+read-only proof task to the local BARS runtime, polls local completion, and
+reports truthful evidence back. No inbound Internet listener is opened.
 """
 import json
 import os
@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 
 REMOTE = os.environ.get("TERABITHIA_REMOTE_URL", "").rstrip("/")
-TOKEN = os.environ.get("TERABITHIA_API_KEY", "")
+TOKEN = os.environ.get("BARS_REMOTE_TOKEN", "")
 LOCAL = os.environ.get("BARS_LOCAL_URL", "http://127.0.0.1:4321").rstrip("/")
 NODE_ID = os.environ.get("BARS_NODE_ID", socket.gethostname() or "bars-node")
 POLL_SECONDS = max(1.0, float(os.environ.get("BARS_REMOTE_POLL_SECONDS", "2")))
@@ -22,6 +22,12 @@ LOCAL_TIMEOUT_SECONDS = max(30, int(os.environ.get("BARS_REMOTE_MISSION_TIMEOUT"
 TERMINAL_DONE = {"DONE", "COMPLETED", "COMPLETE", "SUCCESS"}
 TERMINAL_FAILED = {"FAILED", "ERROR"}
 TERMINAL_CANCELLED = {"ABORTED", "CANCELLED", "CANCELED"}
+BLOCKED_REMOTE_TERMS = (
+    "delete", "remove", "send ", "email", "message ", "post ", "publish", "buy", "purchase",
+    "pay ", "payment", "checkout", "merge", "push ", "commit", "deploy", "install", "uninstall",
+    "edit ", "modify", "change ", "write ", "create ", "upload", "download", "execute", "run command",
+    "terminal", "shell", "take over", "takeover", "mouse", "keyboard", "fill form", "submit"
+)
 
 
 def request(url, method="GET", payload=None, timeout=20):
@@ -60,14 +66,33 @@ def normalize_local_status(raw):
     return "working"
 
 
-def dispatch_remote(mission):
-    mission_id = mission["mission_id"]
+def validate_read_only_proof(mission):
+    if mission.get("capability") != "read_only_proof":
+        return False, "unsupported remote capability"
     intent = str(mission.get("user_intent") or "").strip()
     if not intent:
-        report(mission_id, "failed", summary="Remote mission had no user_intent.", failures=["missing user_intent"])
+        return False, "missing user_intent"
+    lowered = f" {intent.lower()} "
+    hit = next((term for term in BLOCKED_REMOTE_TERMS if term in lowered), None)
+    if hit:
+        return False, f"blocked remote action term: {hit.strip()}"
+    return True, intent
+
+
+def dispatch_remote(mission):
+    mission_id = mission["mission_id"]
+    ok, detail = validate_read_only_proof(mission)
+    if not ok:
+        report(mission_id, "failed", summary="Remote mission rejected by BARS read-only gate.", failures=[detail])
         return
 
-    code, dispatched = request(f"{LOCAL}/brief", "POST", {"brief": intent}, timeout=30)
+    intent = detail
+    bounded_brief = (
+        "REMOTE MISSION PROOF V1 — READ ONLY. Do not modify files, submit forms, send messages, publish, "
+        "purchase, deploy, execute shell commands, use desktop takeover, or perform any irreversible action. "
+        "Only inspect/read the requested target and return evidence. Task: " + intent
+    )
+    code, dispatched = request(f"{LOCAL}/brief", "POST", {"brief": bounded_brief}, timeout=30)
     bars_id = str(dispatched.get("id") or "") if isinstance(dispatched, dict) else ""
     if code >= 300 or not bars_id:
         report(mission_id, "failed", summary="Local BARS dispatch failed.", failures=[str(dispatched)[:500]])
@@ -77,7 +102,7 @@ def dispatch_remote(mission):
         mission_id,
         "working",
         bars_mission_id=bars_id,
-        summary=f"BARS accepted the mission as {bars_id}.",
+        summary=f"BARS accepted the read-only proof mission as {bars_id}.",
         evidence=[{"type": "external_state", "ref": f"bars://mission/{bars_id}", "summary": "local BARS mission receipt"}],
     )
 
@@ -110,7 +135,7 @@ def dispatch_remote(mission):
 
 def run_once():
     if not REMOTE or not TOKEN:
-        raise RuntimeError("TERABITHIA_REMOTE_URL and TERABITHIA_API_KEY are required; bridge fails closed.")
+        raise RuntimeError("TERABITHIA_REMOTE_URL and BARS_REMOTE_TOKEN are required; bridge fails closed.")
     code, mission = request(
         f"{REMOTE}/api/v1/operators/bars/claim",
         "POST",
@@ -127,8 +152,8 @@ def run_once():
 
 def main():
     if not REMOTE or not TOKEN:
-        raise SystemExit("BARS remote bridge disabled: set TERABITHIA_REMOTE_URL and TERABITHIA_API_KEY.")
-    print(f"[BARS remote] outbound bridge online as {NODE_ID}; polling {REMOTE}")
+        raise SystemExit("BARS remote bridge disabled: set TERABITHIA_REMOTE_URL and BARS_REMOTE_TOKEN.")
+    print(f"[BARS remote] outbound read-only bridge online as {NODE_ID}; polling {REMOTE}")
     while True:
         try:
             worked = run_once()
