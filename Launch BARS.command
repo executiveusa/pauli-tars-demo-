@@ -1,5 +1,5 @@
 #!/bin/bash
-# BARS — double-click launcher. Starts the cockpit and its Terabithia adapter.
+# BARS — double-click launcher. Starts the cockpit, Terabithia adapter, and optional outbound remote bridge.
 cd "$(dirname "$0")"
 
 if [ ! -f config.json ]; then
@@ -25,6 +25,20 @@ else
   echo "Launching BARS Terabithia adapter on http://127.0.0.1:4324 ..."
   nohup python3 terabithia_adapter.py > terabithia-adapter.log 2>&1 &
   sleep 1
+fi
+
+# Remote operation is outbound-only. Nothing is exposed inbound on this machine.
+# The worker uses a dedicated token, separate from the Terabithia authority key.
+if [ -n "$TERABITHIA_REMOTE_URL" ] && [ -n "$BARS_REMOTE_TOKEN" ]; then
+  if pgrep -f "[p]ython3 remote_bridge.py" >/dev/null 2>&1; then
+    echo "BARS remote bridge is already running."
+  else
+    echo "Launching outbound BARS remote bridge ..."
+    nohup python3 remote_bridge.py > remote-bridge.log 2>&1 &
+    sleep 1
+  fi
+else
+  echo "Remote bridge disabled (TERABITHIA_REMOTE_URL / BARS_REMOTE_TOKEN not set)."
 fi
 
 # Chrome currently gives the best mic + screen-share support.

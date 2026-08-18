@@ -48,6 +48,15 @@ if not exist "config.json" (
     )
 )
 
+REM Remote operation is outbound-only and stays disabled unless explicitly configured.
+REM Worker auth is deliberately separate from the Terabithia authority key.
+if defined TERABITHIA_REMOTE_URL if defined BARS_REMOTE_TOKEN (
+    echo  Starting outbound BARS remote bridge...
+    start "BARS Remote Bridge" /min python remote_bridge.py
+) else (
+    echo  Remote bridge disabled - TERABITHIA_REMOTE_URL / BARS_REMOTE_TOKEN not set.
+)
+
 echo  Starting BARS...
 echo  Browser will open automatically at http://localhost:4321
 echo  Press Ctrl+C to stop.
