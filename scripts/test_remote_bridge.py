@@ -6,6 +6,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REMOTE_REPORTS = []
+LOCAL_BRIEFS = []
 CLAIMED = False
 
 
@@ -21,7 +22,7 @@ class RemoteHandler(BaseHTTPRequestHandler):
         if raw: self.wfile.write(raw)
     def do_POST(self):
         global CLAIMED
-        if self.headers.get("Authorization") != "Bearer test-token":
+        if self.headers.get("Authorization") != "Bearer worker-token":
             return self._json(401, {"error": "Unauthorized"})
         if self.path == "/api/v1/operators/bars/claim":
             if CLAIMED: return self._json(204)
@@ -31,6 +32,7 @@ class RemoteHandler(BaseHTTPRequestHandler):
                 "request_id": "req_1",
                 "conversation_id": "conv_1",
                 "trace_id": "trace_1",
+                "capability": "read_only_proof",
                 "user_intent": "Inspect the demo page and return evidence.",
                 "status": "claimed",
             })
@@ -52,6 +54,9 @@ class LocalBarsHandler(BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(raw)
     def do_POST(self):
         if self.path == "/brief":
+            n = int(self.headers.get("Content-Length", "0") or 0)
+            payload = json.loads(self.rfile.read(n) or b"{}")
+            LOCAL_BRIEFS.append(payload.get("brief", ""))
             return self._json(200, {"id": "local_123"})
         return self._json(404, {})
     def do_GET(self):
@@ -69,7 +74,7 @@ def start(handler):
 def main():
     remote = start(RemoteHandler); local = start(LocalBarsHandler)
     os.environ["TERABITHIA_REMOTE_URL"] = f"http://127.0.0.1:{remote.server_port}"
-    os.environ["TERABITHIA_API_KEY"] = "test-token"
+    os.environ["BARS_REMOTE_TOKEN"] = "worker-token"
     os.environ["BARS_LOCAL_URL"] = f"http://127.0.0.1:{local.server_port}"
     os.environ["BARS_NODE_ID"] = "ci-node"
     os.environ["BARS_REMOTE_POLL_SECONDS"] = "0.01"
@@ -84,6 +89,12 @@ def main():
         assert final["status"] == "done", final
         assert final["bars_mission_id"] == "local_123", final
         assert final["evidence"], final
+        assert LOCAL_BRIEFS and "READ ONLY" in LOCAL_BRIEFS[0], LOCAL_BRIEFS
+        ok, why = remote_bridge.validate_read_only_proof({
+            "capability": "read_only_proof",
+            "user_intent": "Deploy the application",
+        })
+        assert ok is False and "blocked" in why, (ok, why)
         print("REMOTE_MISSION_PROOF_OK")
     finally:
         remote.shutdown(); local.shutdown()
