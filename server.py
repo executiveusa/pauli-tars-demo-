@@ -310,7 +310,10 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                 env_key = m.get("api_key_env", "")
                 if env_key:
                     routed_key = os.environ.get(env_key, "") or _load_json(os.path.join(ROOT, "config.json")).get("model", {}).get("api_key", "")
-                max_tokens = routed_tokens
+                # Only use router's max_tokens if it's >= the requested amount
+                # (the handler knows the prompt size better than the router)
+                if routed_tokens >= max_tokens:
+                    max_tokens = routed_tokens
         except Exception:
             pass  # Fall back to static config if router fails
 
@@ -334,6 +337,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
             "model": model if ("/" in str(model) or base) else f"anthropic/{model}",
             "max_tokens": max_tokens,
             "messages": oai_msgs,
+            "stream": False,
         }).encode()
         req = urllib.request.Request(
             url, data=body,
@@ -367,7 +371,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         headers={"x-api-key": CONFIG["anthropic_key"],
                  "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=90) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         data = json.load(r)
     txt = "".join(b.get("text", "") for b in data.get("content", []))
     if sb:
@@ -1571,8 +1575,15 @@ class Handler(BaseHTTPRequestHandler):
             msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
                     for h in history[-8:] if h.get("role") in ("user", "assistant")]
             msgs.append({"role": "user", "content": text})
-            # Quick chat has no web — but BARS can deploy HIMSELF on a mission that does.
-            esc_proto = (
+            # BARS AUTO-ROUTER: trim esc_proto for simple chat (saves 2000 tokens, 15s latency)
+            # Only include deployment/tool instructions when the message needs them
+            _needs_deploy = any(kw in text.lower() for kw in [
+                "research", "scrape", "web", "find", "search", "investigate",
+                "send", "email", "post", "publish", "deploy", "build", "make",
+                "take over", "drive", "install", "connect", "tool"
+            ])
+            if _needs_deploy:
+                esc_proto = (
                 " You cannot browse the web in quick chat, but you CAN deploy a squad member on a "
                 "background mission with full web access (takes a few minutes). If the request "
                 "needs live data, real research, prospecting, auditing, or actual work product: "
@@ -1605,6 +1616,8 @@ class Handler(BaseHTTPRequestHandler):
                 "[TOOL_ADD: <id>] or [TOOL_REMOVE: <id>] — ids: "
                 + ", ".join(sorted(TOOL_CATALOG)) + ". The ⚒ TOOLS panel opens for him "
                 "automatically if a key or sign-in is needed.")
+            else:
+                esc_proto = " Reply concisely."  # minimal instruction for simple chat
             try:
                 reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block()
                                        + jobs_block() + tools_block(),
