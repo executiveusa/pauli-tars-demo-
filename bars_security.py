@@ -136,10 +136,16 @@ class BudgetLedger:
             fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX)   # cross-process
-                try:
-                    with open(self.path) as f:   # re-read under lock
-                        state = json.load(f)
-                except Exception:
+                if os.path.exists(self.path):
+                    try:
+                        with open(self.path) as f:   # re-read under lock
+                            state = json.load(f)
+                        if not isinstance(state, dict) or "used" not in state:
+                            raise ValueError("bad shape")
+                    except Exception as e:
+                        # fail CLOSED: never silently reset a money ledger
+                        raise RuntimeError(f"budget state unreadable, refusing spend: {e}")
+                else:
                     state = {"v": VERSION, "day": "", "used": 0, "holds": {}}
                 day = time.strftime("%Y-%m-%d")
                 if state.get("day") != day:      # roll the daily counter BEFORE fn
@@ -154,25 +160,58 @@ class BudgetLedger:
             finally:
                 os.close(fd)
 
+    HOLD_TTL = 600          # a reservation older than 10 min is stale
+
     def used(self):
         return self._locked(lambda s: int(s.get("used", 0)))
+
+    def sweep_stale(self):
+        """Release holds older than HOLD_TTL (crashed callers). Returns them."""
+        now = time.time()
+        def fn(s):
+            stale = {k: v for k, v in s.get("holds", {}).items()
+                     if isinstance(v, list) and now - v[1] > self.HOLD_TTL}
+            for k in stale:
+                s["holds"].pop(k, None)
+            return stale
+        return self._locked(fn)
+
+    def stale_holds(self):
+        now = time.time()
+        def fn(s):
+            return {k: v[0] for k, v in s.get("holds", {}).items()
+                    if isinstance(v, list) and now - v[1] > self.HOLD_TTL}
+        try:
+            return self._locked(fn)
+        except Exception:
+            return {}
 
     def reserve(self, estimate, hold_id):
         """Fail-closed reservation. Raises RuntimeError if over budget."""
         def fn(s):
-            held = sum(int(v) for v in s.get("holds", {}).values())
+            held = sum(int(v[0]) if isinstance(v, list) else int(v)
+                       for v in s.get("holds", {}).values())
             projected = int(s.get("used", 0)) + held + int(estimate)
             if projected > self.daily_budget:
                 raise RuntimeError(
                     f"Paid token budget exhausted today "
                     f"({s.get('used', 0)}+{held}held+{estimate}/{self.daily_budget}). Fail-closed.")
-            s.setdefault("holds", {})[hold_id] = int(estimate)
+            s.setdefault("holds", {})[hold_id] = [int(estimate), time.time()]
         self._locked(fn)
 
     def settle(self, hold_id, actual):
         def fn(s):
-            est = s.setdefault("holds", {}).pop(hold_id, 0)
+            v = s.setdefault("holds", {}).pop(hold_id, 0)
             s["used"] = int(s.get("used", 0)) + max(int(actual), 0)
+        self._locked(fn)
+
+    def fail(self, hold_id):
+        """Settle a FAILED paid attempt at its reserved estimate: provider-side
+        failures can still bill, so the conservative accounting keeps it."""
+        def fn(s):
+            v = s.setdefault("holds", {}).pop(hold_id, None)
+            est = (v[0] if isinstance(v, list) else v) or 0
+            s["used"] = int(s.get("used", 0)) + int(est)
         self._locked(fn)
 
     def release(self, hold_id):
@@ -193,6 +232,8 @@ class ReceiptLedger:
     def __init__(self, path, key_path):
         self.path = path
         self._lock = threading.Lock()
+        self._lock_path = path + ".lock"
+        self._anchor_path = path + ".anchor"
         self.write_failures = 0
         self.last_error = None
         self._key = self._load_key(key_path)
@@ -202,13 +243,41 @@ class ReceiptLedger:
         st = self._load_state()
         self._seq = st.get("seq", 0)
         self._prev = st.get("prev", "")
+        self.startup_findings = []
         tail = self._tail_hmac()
+        anchor = self._read_anchor()
         if tail and tail != self._prev:
-            # file tail disagrees with durable state: tamper or truncation
             self.write_failures += 1
             self.last_error = "chain-state mismatch at startup"
+            self.startup_findings.append("chain-state mismatch: file tail != durable state")
         elif not self._prev and tail:
             self._prev = tail
+        if anchor and self._prev and anchor.get("prev") != self._prev:
+            self.write_failures += 1
+            self.last_error = "anchor mismatch at startup"
+            self.startup_findings.append("external anchor mismatch: ledger tip != protected anchor")
+        if anchor and isinstance(anchor.get("seq"), int) and anchor["seq"] > self._seq:
+            self.write_failures += 1
+            self.startup_findings.append(
+                f"anchor seq {anchor['seq']} ahead of state seq {self._seq}: truncation suspected")
+
+    def _read_anchor(self):
+        try:
+            with open(self._anchor_path) as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _write_anchor(self):
+        """Protected external anchor: the chain tip, HMACed with the ledger key,
+        written 0600 to a separate file so single-file tampering is detectable."""
+        body = json.dumps({"seq": self._seq, "prev": self._prev}, sort_keys=True)
+        mac = hmac.new(self._key, body.encode(), hashlib.sha256).hexdigest()
+        fd, tmp = tempfile.mkstemp(prefix=".ranchor-", dir=os.path.dirname(self.path) or ".")
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps({"seq": self._seq, "prev": self._prev, "_h": mac}))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self._anchor_path)
 
     def _load_key(self, key_path):
         try:
@@ -276,6 +345,8 @@ class ReceiptLedger:
         ev.setdefault("ts", time.time())
         try:
             with self._lock:
+                lfd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+                fcntl.flock(lfd, fcntl.LOCK_EX)   # cross-process writers
                 # rotate FIRST: the checkpoint anchors the previous chain tip,
                 # then this event chains from the checkpoint under one lock
                 if os.path.exists(self.path) and os.path.getsize(self.path) > self.MAX_BYTES:
@@ -293,6 +364,8 @@ class ReceiptLedger:
                     os.close(fd)
                 self._prev = mac
                 self._save_state()
+                self._write_anchor()
+                os.close(lfd)
         except Exception as e:
             self.write_failures += 1
             self.last_error = f"{type(e).__name__}: {e}"
@@ -334,7 +407,9 @@ class ReceiptLedger:
 
     def status(self):
         return {"write_failures": self.write_failures, "last_error": self.last_error,
-                "path": self.path, "integrity": "hmac-sha256-chain", "v": VERSION}
+                "startup_findings": getattr(self, "startup_findings", []),
+                "anchor": os.path.exists(self._anchor_path),
+                "path": self.path, "integrity": "hmac-sha256-chain+anchor", "v": VERSION}
 
 # ------------------------------------------------------------ confirmations
 
@@ -345,12 +420,18 @@ class ConfirmationStore:
     endpoint requires the confirmation id and re-hashes the payload it was
     asked to run, so nothing can be swapped between review and execution."""
 
-    POLICIES = {   # action -> (ttl seconds, description)
-        "mission.exec": (120, "run a mission (spends model tokens)"),
-        "squad.exec": (120, "run a squad of parallel missions"),
-        "build.exec": (120, "execute a generated build artifact"),
-        "paid.enable": (300, "enable paid model escalation"),
-        "tools.write": (120, "modify the tool registry"),
+    POLICIES = {   # action -> (ttl seconds, description, token cost bound)
+        "chat.exec": (180, "send a chat message (one model call)", 4096),
+        "chat.see": (180, "analyze a shared screen frame (one model call)", 4096),
+        "chat.followup": (180, "run a follow-up turn (one model call)", 4096),
+        "act.exec": (180, "queue a spoken/action directive", 1024),
+        "mission.plan": (120, "plan a squad split (one model call, no execution)", 1024),
+        "mission.exec": (120, "run a mission (spends model tokens)", 8192),
+        "squad.exec": (120, "run a squad of parallel missions", 16384),
+        "build.exec": (120, "execute a generated build artifact", 8192),
+        "hands.exec": (120, "run a machine-control task on this host", 4096),
+        "paid.enable": (300, "enable paid model escalation", 0),
+        "tools.write": (120, "modify the tool registry", 0),
     }
 
     def __init__(self):
@@ -360,7 +441,7 @@ class ConfirmationStore:
     def mint(self, action, payload, recipient):
         if action not in self.POLICIES:
             raise SecurityConfigError(f"no confirmation policy for action {action!r}")
-        ttl, desc = self.POLICIES[action]
+        ttl, desc, cost = self.POLICIES[action]
         obj = {
             "id": secrets.token_urlsafe(18),
             "v": VERSION,
@@ -368,6 +449,8 @@ class ConfirmationStore:
             "policy": desc,
             "payload_sha256": hashlib.sha256(
                 json.dumps(payload, sort_keys=True).encode()).hexdigest(),
+            "payload_preview": json.dumps(payload, sort_keys=True)[:400],
+            "cost_bound": cost,
             "recipient": recipient,
             "nonce": secrets.token_hex(8),
             "expires_at": time.time() + ttl,
@@ -382,7 +465,7 @@ class ConfirmationStore:
         for k in [k for k, v in self._items.items() if v["expires_at"] < now]:
             del self._items[k]
 
-    def consume(self, cid, action, payload):
+    def consume(self, cid, action, payload, recipient=None):
         with self._lock:
             self._sweep_locked()
             obj = self._items.pop(cid, None)     # single-use, always consumed
@@ -390,6 +473,8 @@ class ConfirmationStore:
             raise RuntimeError("confirmation unknown or already used")
         if obj["action"] != action:
             raise RuntimeError("confirmation action mismatch")
+        if recipient is not None and obj["recipient"] != recipient:
+            raise RuntimeError("confirmation recipient mismatch - refused")
         if obj["expires_at"] < time.time():
             raise RuntimeError("confirmation expired")
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

@@ -30,6 +30,7 @@ docker tag "bars-sovereign:$SHA" bars-sovereign:current
 echo "$SHA" > ${BARS_ROOT:-/opt/bars}/current.sha
 
 echo "[deploy] compose restart (hardening from docker-compose.yml)"
+export BARS_GIT_SHA="$SHA"          # /health and /api/status must report this exact SHA
 BARS_IMAGE="bars-sovereign:$SHA" docker compose -f "$APP/docker-compose.yml" up -d --force-recreate
 
 echo "[deploy] wait for health"

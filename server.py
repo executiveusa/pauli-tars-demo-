@@ -182,6 +182,14 @@ def _apply_env_overrides(cfg):
     return cfg
 
 CONFIG = _apply_env_overrides(load_config())
+from urllib.parse import urlparse as _urlparse
+_KEY_HOSTS = {}   # api key -> the exact hostname it may be sent to (static path)
+if CONFIG["anthropic_key"] and (CONFIG.get("base_url") or "").strip():
+    _KEY_HOSTS[CONFIG["anthropic_key"]] = (_urlparse(CONFIG["base_url"]).hostname or "").lower()
+if CONFIG.get("openai_key"):
+    _KEY_HOSTS[CONFIG["openai_key"]] = "api.openai.com"
+if CONFIG.get("el_key"):
+    _KEY_HOSTS[CONFIG["el_key"]] = "api.elevenlabs.io"
 hue.init(CONFIG["hue"], ROOT)
 
 def duplex_token():
@@ -459,7 +467,16 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"function approve(need,retry){"
     b"var d=document.createElement('div');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:monospace';"
     b"var c=document.createElement('div');c.style.cssText='background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:440px;border-radius:8px';"
-    b"var t=document.createElement('div');t.innerHTML='<b style=\\'color:#f59e0b\\'>BARS - HUMAN APPROVAL REQUIRED</b><br><br>Action: '+(need.action||'')+'<br>'+(need.policy||'')+'<br><br>This runs only on your explicit approval.';"
+    b"var t=document.createElement('div');"
+    b"var brief='';try{var pb=JSON.parse(document.getElementById('__bars_pending_payload')?document.getElementById('__bars_pending_payload').textContent:'{}');brief=JSON.stringify(pb).slice(0,300)}catch(e){}"
+    b"t.innerHTML='<b style=\\'color:#f59e0b\\'>BARS - HUMAN APPROVAL REQUIRED</b><br><br>'+"
+    b"'<table style=\\'font-size:12px;line-height:1.5\\'>'+"
+    b"'<tr><td align=right><b>Action</b></td><td>'+(need.action||'')+'</td></tr>'+"
+    b"'<tr><td align=right><b>Policy</b></td><td>'+(need.policy||'')+'</td></tr>'+"
+    b"'<tr><td align=right><b>Target</b></td><td>'+(need.recipient||'')+'</td></tr>'+"
+    b"'<tr><td align=right><b>Cost bound</b></td><td>&le; '+(need.cost_bound||0)+' tokens</td></tr>'+"
+    b"'<tr><td align=right><b>Expires</b></td><td>'+(need.ttl_seconds||0)+'s after approval</td></tr>'+"
+    b"'<tr><td align=right valign=top><b>Payload</b></td><td><code style=\\'word-break:break-all\\'>'+brief+'</code></td></tr></table><br>This runs only on your explicit approval.';"
     b"var okb=document.createElement('button');okb.textContent='APPROVE + RUN';okb.style.cssText='background:#f59e0b;color:#000;padding:8px 14px;margin:14px 10px 0 0;cursor:pointer;border:0;border-radius:4px;font-weight:bold';"
     b"var nob=document.createElement('button');nob.textContent='DENY';nob.style.cssText='background:#333;color:#eee;padding:8px 14px;margin-top:14px;cursor:pointer;border:1px solid #666;border-radius:4px';"
     b"nob.onclick=function(){d.remove()};"
@@ -472,6 +489,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var p=new URL(url,location.href).pathname;"
     b"var h=new Headers(o.headers||{});var m=(o.method||'GET').toUpperCase();"
     b"if(same&&m!=='GET'){var c=ck('bars_csrf');if(c)h.set('X-CSRF-Token',c);}o.headers=h;"
+    b"if(o.body){var st=document.getElementById('__bars_pending_payload');if(!st){st=document.createElement('script');st.type='application/json';st.id='__bars_pending_payload';document.documentElement.appendChild(st)}st.textContent=o.body}"
     b"var exec=function(){return of(u,o)};"
     b"return exec().then(function(r){"
     b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'){"
@@ -565,6 +583,14 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     base = (routed_base or CONFIG.get("base_url") or "").strip().rstrip("/")
     model = routed_model or CONFIG["model"]
     api_key = routed_key or CONFIG["anthropic_key"]
+    if not routed_key and api_key and base:
+        _h = (_urlparse(base if "://" in base else "https://" + base).hostname or "").lower()
+        _bound = _KEY_HOSTS.get(api_key)
+        if _bound and _h and _h != _bound:
+            raise RuntimeError(
+                f"key-host binding: refusing to send the static provider key to "
+                f"{_h} (bound to {_bound}). Pick a model on the bound host or "
+                "configure a key for this host.")
     use_or = bool(base) or ("/" in str(model) and not str(model).startswith("claude"))
     max_tokens = min(max_tokens, int(os.environ.get("BARS_MAX_TOKENS_CAP", "4096")))
     _host = (base or "https://openrouter.ai/api/v1") if use_or else "https://api.anthropic.com"
@@ -597,7 +623,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
             # bounded fallback: a routed lane that fails falls back once to the
             # static lane (cost-gated separately), every attempt receipted.
             if hold:
-                BUDGET.release(hold); hold = None
+                BUDGET.fail(hold); hold = None   # paid failures can still bill
             _receipt({"kind": "chat_attempt", "lane": LAST_USAGE.get("lane"),
                       "model": str(model), "paid": paid, "ok": False,
                       "error": str(e)[:200], "ms": int((time.time() - t0) * 1000)})
@@ -629,7 +655,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                     # the fallback failed too: release its hold and receipt the
                     # attempt, then surface the failure truthfully
                     if hold:
-                        BUDGET.release(hold); hold = None
+                        BUDGET.fail(hold); hold = None
                     _receipt({"kind": "chat_attempt", "lane": "static-fallback",
                               "model": str(model), "paid": _paid_route(fhost),
                               "ok": False, "error": str(e2)[:200],
@@ -680,7 +706,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
             data = json.load(r)
     except Exception as e:
         if hold:
-            BUDGET.release(hold); hold = None
+            BUDGET.fail(hold); hold = None
         _receipt({"kind": "chat_attempt", "lane": "static", "model": str(CONFIG["model"]),
                   "paid": paid, "ok": False, "error": str(e)[:200],
                   "ms": int((time.time() - t0) * 1000)})
@@ -1535,12 +1561,16 @@ def run_internal_mission(m):
             "start with '# MISSION REPORT', then '## Findings' (specific, honest about "
             "sources), then '## Recommended next actions' (numbered, concrete). "
             "Drafts only — nothing here sends, posts, or builds outward.")
+        if m.get("_abort"):
+            return
         report = anthropic_chat(
             persona(STATE) + " You write mission reports: professional substance, BARS "
             "voice allowed in at most one dry line at the top. The report is the "
             "deliverable — completeness beats brevity." + mem_block(),
             [{"role": "user", "content": worker_prompt}],
             max_tokens=1800, user_message=m["brief"])
+        if m.get("_abort"):
+            return                      # /abort fired mid-call; status already set
         if not report.strip():
             raise RuntimeError("empty report from provider")
         _event(m, "sys", "Report written.")
@@ -1635,8 +1665,8 @@ def run_mission(mid):
     elif m.get("kind") == "ACT":
         # CONFIRMED outward action (trust dial): MCP tools allowed, still no shell/files.
         prompt = (
-            f"CONFIRMED ACTION ORDER: {m['brief']}\n\n"
-            "The Commander has explicitly confirmed this action. Execute EXACTLY this action and "
+            f"ACTION ORDER (bound by confirmation {m.get('id', '')}): {m['brief']}\n\n"
+            "This order reached you through the confirmation-gated queue. Execute EXACTLY this action and "
             "nothing more, using the available MCP tools (Gmail, Blotato, calendar, etc.). "
             "Load tool schemas with ToolSearch first if needed. Do not invent additional "
             "actions, recipients, or posts. BROWSER TAKEOVER orders: use the playwright "
@@ -1925,8 +1955,26 @@ class Handler(BaseHTTPRequestHandler):
     LOGIN_FAILS = {}
     LOGIN_LOCK = threading.Lock()
 
+    def _throttle_auth_fail(self):
+        """Bearer/session failures get the same per-IP backoff as logins."""
+        ip = self._client_ip()
+        with self.LOGIN_LOCK:
+            rec = self.LOGIN_FAILS.setdefault(ip, {"n": 0, "t": 0.0})
+            rec["n"] += 1
+            rec["t"] = time.time()
+            n = rec["n"]
+        if n > 3:
+            time.sleep(min(0.5 * (2 ** min(n - 3, 4)), 8))
+
+    def _client_ip(self):
+        # behind Caddy the peer is loopback; the first XFF hop is the client
+        xff = self.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip()[:64]
+        return self.client_address[0] if self.client_address else "?"
+
     def _login(self):
-        ip = self.client_address[0] if self.client_address else "?"
+        ip = self._client_ip()
         now = time.time()
         with self.LOGIN_LOCK:
             rec = self.LOGIN_FAILS.get(ip, {"n": 0, "t": 0.0})
@@ -1962,15 +2010,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _need_confirmation(self, action, data):
+    def _need_confirmation(self, action, data, recipient=None):
         cid = self.headers.get("X-BARS-Confirmation", "")
         try:
-            CONFIRMATIONS.consume(cid, action, data)
+            CONFIRMATIONS.consume(cid, action, data, recipient=recipient)
             return True
         except Exception as e:
-            policy = sec.ConfirmationStore.POLICIES.get(action, (0, ""))[1]
+            ttl, policy, cost = sec.ConfirmationStore.POLICIES.get(action, (0, "", 0))
             self._json({"error": f"confirmation required: {e}",
-                        "need_confirmation": {"action": action, "policy": policy}}, 409)
+                        "need_confirmation": {"action": action, "policy": policy,
+                                              "recipient": recipient or "",
+                                              "cost_bound": cost,
+                                              "ttl_seconds": ttl}}, 409)
             return False
 
     def _body(self):
@@ -2004,6 +2055,7 @@ class Handler(BaseHTTPRequestHandler):
         if not public and not _token_ok(self.headers):
             if path == "/api/status":
                 self._json(_public_status()); return   # sanitized anonymous status
+            self._throttle_auth_fail()
             self._need_auth(); return
         if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html"):
             # the visual BARS cockpit is the primary interface at / and /agent/;
@@ -2070,6 +2122,9 @@ class Handler(BaseHTTPRequestHandler):
                                     key=lambda m: m["t_start"], reverse=True)]
             self._json({"missions": slim, "dials": STATE})
         elif path.startswith("/mission/"):
+            _mid = path[len("/mission/"):].split("?")[0].split("/")[0]
+            if not re.fullmatch(r"[0-9a-f]{8}", _mid):
+                self._json({"error": "bad mission id"}, 400); return
             mid = path.split("/")[2]
             m = MISSIONS.get(mid)
             if not m:
@@ -2125,7 +2180,8 @@ class Handler(BaseHTTPRequestHandler):
             spend = {}
             receipts_status = RECEIPTS.status()
             budget_status = {"used": BUDGET.used(), "cap": BUDGET.daily_budget,
-                             "paid_enabled": os.environ.get("BARS_ALLOW_PAID") == "1"}
+                             "paid_enabled": os.environ.get("BARS_ALLOW_PAID") == "1",
+                             "stale_holds": BUDGET.stale_holds()}
             sb = _spend_bridge()
             if sb:
                 try:
@@ -2171,6 +2227,7 @@ class Handler(BaseHTTPRequestHandler):
             SESSIONS.destroy(_cookie(self.headers, "bars_session"))
             self._json({"ok": True}); return
         if not _token_ok(self.headers, mutate=True):
+            self._throttle_auth_fail()
             self._need_auth(); return
         if path == "/api/confirmations":
             data = self._body()
@@ -2204,6 +2261,8 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()[:4000]
             if not text:
                 self._json({"error": "empty"}, 400); return
+            if not self._need_confirmation("chat.exec", data, recipient="/chat"):
+                return
             history = data.get("history") or []
             msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
                     for h in history[-8:] if h.get("role") in ("user", "assistant")]
@@ -2320,8 +2379,11 @@ class Handler(BaseHTTPRequestHandler):
             if not brief:
                 self._json({"error": "empty brief"}, 400); return
             sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
-            act = "squad.exec" if (sq0 or data.get("squad")) else "mission.exec"
-            if not self._need_confirmation(act, data):
+            if data.get("plan"):
+                act = "mission.plan"
+            else:
+                act = "squad.exec" if (sq0 or data.get("squad")) else "mission.exec"
+            if not self._need_confirmation(act, data, recipient="/brief"):
                 return
             sq = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if sq or data.get("squad"):
@@ -2343,9 +2405,12 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/abort":
             mid = data.get("id", "")
+            if not re.fullmatch(r"[0-9a-f]{8}", mid or ""):
+                self._json({"error": "bad mission id"}, 400); return
             m = MISSIONS.get(mid)
             proc = RUNNING.get(mid)
             if m and m["status"] == "EN ROUTE":
+                m["_abort"] = True                       # internal worker checks this
                 m.update(status="ABORTED", t_end=time.time(),
                          debrief="Job aborted on your order.")
                 if proc:
@@ -2362,7 +2427,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "unknown tool"}, 400); return
             installed = tools_installed()
             if op == "install":
-                if not self._need_confirmation("tools.write", data):
+                if not self._need_confirmation("tools.write", data, recipient="/tools"):
                     return
                 cur = installed.setdefault(tid, {"env": {}})
                 for k, v in (data.get("env") or {}).items():
@@ -2405,6 +2470,8 @@ class Handler(BaseHTTPRequestHandler):
             mm = re.match(r"^data:(image/(?:png|jpeg|webp));base64,(.+)$", img, re.S)
             if not mm:
                 self._json({"error": "bad image"}, 400); return
+            if not self._need_confirmation("chat.see", data, recipient="/see"):
+                return
             q = (data.get("question") or
                  "This is the Commander's screen right now. Tell him what you see and give your "
                  "blunt take — what's good, what's off, what you'd fix first.")
@@ -2455,6 +2522,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(e)[:200]}, 500)
 
         elif path == "/act":
+            if not self._need_confirmation("act.exec", data, recipient="/act"):
+                return
             if STATE.get("trust") != "confirm-to-act":
                 self._json({"reply": "Trust is set to draft-safe. Flip it to CONFIRM-TO-ACT "
                                      "in the HUD if you want me actually pulling triggers.",
@@ -2584,10 +2653,18 @@ class Handler(BaseHTTPRequestHandler):
             known = any(m["id"] == mid for m in MODELS) or (avail and mid in avail)
             if not mid or (not known and "/" not in mid and not mid.startswith("claude-")):
                 self._json({"error": "unknown model"}, 400); return
+            target_base = CONFIG.get("base_url") or ""
+            if "/" in mid and not target_base.strip():
+                target_base = "https://openrouter.ai/api/v1"
+            _th = (_urlparse(target_base if "://" in target_base else "https://" + target_base)
+                   .hostname or "").lower()
+            _tb = _KEY_HOSTS.get(CONFIG["anthropic_key"])
+            if _tb and _th and _th != _tb:
+                self._json({"error": f"model switch refused: the configured key is bound "
+                                     f"to {_tb}, not {_th}. Configure a key for {_th} first."},
+                           400); return
             CONFIG["model"] = mid
-            # OpenRouter-style ids need base_url
-            if "/" in mid and not (CONFIG.get("base_url") or "").strip():
-                CONFIG["base_url"] = "https://openrouter.ai/api/v1"
+            CONFIG["base_url"] = target_base
             try:  # persist so the pick survives restarts
                 cfg = _load_json(CONFIG_PATH)
                 cfg.setdefault("model", {})["model"] = mid
@@ -2604,6 +2681,8 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/followup":
             mid = data.get("id", "")
+            if not self._need_confirmation("chat.followup", data, recipient="/followup"):
+                return
             m = MISSIONS.get(mid)
             if not m or not m.get("follow_up"):
                 self._json({"error": "no follow-up available"}, 400); return
@@ -2669,7 +2748,12 @@ class DuplexHandler(BaseHTTPRequestHandler):
             self._deny(); return
         try:
             n = int(self.headers.get("Content-Length", 0) or 0)
-            data = json.loads(self.rfile.read(n) or b"{}")
+            try:
+                data = json.loads(self.rfile.read(n) or b"{}")
+                if not isinstance(data, dict):
+                    raise ValueError("body must be a JSON object")
+            except Exception:
+                self._deny(400); return
             msgs = []
             for msg in (data.get("messages") or [])[-12:]:
                 role = msg.get("role")
@@ -2715,6 +2799,21 @@ def main():
     for d in (MISSIONS_DIR, WORKBENCH, BUILDS_DIR):
         os.makedirs(d, exist_ok=True)
     load_missions()
+    try:
+        stale = BUDGET.sweep_stale()
+        if stale:
+            print(f"[bars] swept {len(stale)} stale budget holds at startup")
+    except Exception as e:
+        print(f"[bars] budget state error at startup: {e}")
+    _locks = os.path.join(MISSIONS_DIR, "locks")
+    if os.path.isdir(_locks):
+        for _lf in os.listdir(_locks):
+            _mid = _lf[:-5] if _lf.endswith(".lock") else ""
+            if _mid and MISSIONS.get(_mid, {}).get("status") != "EN ROUTE":
+                try:
+                    os.unlink(os.path.join(_locks, _lf))   # stale: no live runner
+                except OSError:
+                    pass
     for _mid in _RESUME:                      # restart recovery (opt-in)
         if _mid in MISSIONS:
             MISSIONS[_mid]["status"] = "EN ROUTE"

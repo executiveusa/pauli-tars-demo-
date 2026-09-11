@@ -519,9 +519,16 @@ def handle(handler, method, raw_path, payload):
 
     if path == "/hands_go":
         cid = (p.get("confirm_id") or "").strip()
-        task = PENDING.pop(cid, None) or (p.get("task") or "").strip()
+        task = PENDING.pop(cid, None)
+        # no body fallback: the exact task must come from a /hands_request
+        # pending entry AND a hands.exec server confirmation binding that task
         if not task:
-            handler._json({"error": "nothing to do, sir"}, 400); return True
+            handler._json({"error": "unknown confirm_id - request the task first"}, 400)
+            return True
+        if not handler._need_confirmation("hands.exec", {"task": task},
+                                          recipient="/hands_go"):
+            PENDING[cid] = task     # put it back; approval can still happen
+            return True
         if RUN["active"]:
             handler._json({"error": "already driving, sir"}, 409); return True
         RUN.update({"active": True, "stop": False, "task": task, "started": time.time()})

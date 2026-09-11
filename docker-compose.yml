@@ -13,6 +13,8 @@ services:
       - /opt/bars/data:/data
     env_file:
       - /opt/bars/.env
+    environment:
+      - BARS_GIT_SHA=${BARS_GIT_SHA:-unknown}
     # Hostinger multi-tenant KVM shows heavy CPU steal — keep BARS capped so
     # StarNet/Command Center and the watchdogs are never starved.
     mem_limit: 512m

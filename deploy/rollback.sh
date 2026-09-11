@@ -14,6 +14,8 @@ docker image inspect bars-sovereign:rollback >/dev/null 2>&1 || { echo "[rollbac
 if [ "${1:-}" = "--with-data" ]; then
   SNAP=$(ls -1t ${BARS_ROOT:-/opt/bars}/backups/data-*.tar.gz 2>/dev/null | head -1 || true)
   [ -n "$SNAP" ] || { echo "[rollback] no data snapshot found"; exit 1; }
+  echo "[rollback] stopping service before data restore"
+  docker compose -f "$APP/docker-compose.yml" stop 2>/dev/null || true
   echo "[rollback] ALSO restoring data snapshot $SNAP (post-deploy data lost)"
   tar -xzf "$SNAP" -C ${BARS_ROOT:-/opt/bars}/data
 else
