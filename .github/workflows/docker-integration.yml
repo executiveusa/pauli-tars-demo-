@@ -24,6 +24,7 @@ jobs:
           echo "CODE_SHA=$GITHUB_SHA" | tee -a run-context.txt
           echo "TEST_SCRIPT_SHA256=$(sha256sum tests/test_deploy_docker.sh | awk '{print $1}')" | tee -a run-context.txt
       - name: Run isolated deploy/rollback integration
+        shell: bash   # -eo pipefail: a failing test fails the step despite tee
         run: |
           BARS_DOCKER_TEST=1 sh tests/test_deploy_docker.sh 2>&1 | tee docker-integration.log
       - name: Record run end

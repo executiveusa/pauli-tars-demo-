@@ -29,12 +29,18 @@ echo "ISOLATION PROVEN: port $TEST_PORT free, no container $CONTAINER, no projec
 
 ROOT=$(mktemp -d /tmp/bars-docker-test-XXXXXX)
 cleanup() {
+  rc=$1
+  if [ "$rc" != "0" ]; then
+    echo "---- failure diagnostics: container logs ----" >&2
+    docker logs "$CONTAINER" 2>&1 | tail -40 >&2 || true
+    docker ps -a --filter "name=$CONTAINER" >&2 || true
+  fi
   docker compose -p "$PROJECT" -f "$ROOT/root/app/docker-compose.yml" down -v >/dev/null 2>&1 || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   for i in $(docker images -q "$IMG" | sort -u); do docker image rm -f "$i" >/dev/null 2>&1 || true; done
   rm -rf "$ROOT"
 }
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 
 export BARS_ROOT="$ROOT/root"
 export BARS_DATA="$BARS_ROOT/data"
@@ -45,8 +51,10 @@ export BARS_CONTAINER_NAME="$CONTAINER"
 export BARS_HOST_PORT="$TEST_PORT"
 export BARS_ENV_FILE="$ROOT/test.env"
 mkdir -p "$BARS_DATA" "$BARS_ROOT/backups" "$BARS_ANCHOR"
-# container runs as uid 10001 and must write /data and /anchor
-chown -R 10001:10001 "$BARS_DATA" "$BARS_ANCHOR" 2>/dev/null || true
+# container runs as uid 10001 and must write /data and /anchor. The docker
+# HOST user varies (root on the VPS, uid 1001 on CI runners), so make the
+# throwaway tmp dirs world-writable instead of chowning.
+chmod 0777 "$BARS_DATA" "$BARS_ANCHOR"
 # throwaway test-only token (the server refuses to boot without one); no real
 # secrets - health/identity need no provider keys
 echo "BARS_OPERATOR_TOKEN=integration-test-token" > "$ROOT/test.env"
