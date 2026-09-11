@@ -5,17 +5,17 @@ services:
   bars:
     build: .
     image: ${BARS_IMAGE:-bars-sovereign:local}
-    container_name: bars
+    container_name: ${BARS_CONTAINER_NAME:-bars}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4321:4321"
+      - "127.0.0.1:${BARS_HOST_PORT:-4321}:4321"
     volumes:
-      - /opt/bars/data:/data
+      - ${BARS_DATA:-/opt/bars/data}:/data
       # receipt anchor outside the mutable data volume: an attacker with
       # data-write cannot recompute it (key stays in the env)
-      - /opt/bars/anchor:/anchor
+      - ${BARS_ANCHOR:-/opt/bars/anchor}:/anchor
     env_file:
-      - /opt/bars/.env
+      - ${BARS_ENV_FILE:-/opt/bars/.env}
     environment:
       - BARS_GIT_SHA=${BARS_GIT_SHA:-unknown}
       - BARS_RECEIPT_ANCHOR_PATH=/anchor/receipt.anchor

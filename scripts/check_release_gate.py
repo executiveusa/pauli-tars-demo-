@@ -10,7 +10,7 @@ fail = []
 wf = (ROOT / ".github" / "workflows" / "vibe-code-review.yml")
 if not wf.exists():
     fail.append("missing .github/workflows/vibe-code-review.yml")
-elif "executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@main" not in wf.read_text():
+elif "executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@22af4cb62c97959276055f3b3d977d7aa993adef" not in wf.read_text():
     fail.append("workflow does not call the central reusable OCR workflow")
 
 agents = (ROOT / "AGENTS.md").read_text()

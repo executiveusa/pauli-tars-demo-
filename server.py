@@ -125,6 +125,10 @@ def _cap_reserve(key, est):
                 "tokens against the approved worst-case bound. Refusing the call.")
         e["used"] += est
 
+def _cap_release(key):
+    with MISSION_CAPS_LOCK:
+        MISSION_CAPS.pop(key, None)
+
 def _cap_settle(key, est, actual):
     if not key:
         return
@@ -622,8 +626,6 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     if _cap:
         max_tokens = min(max_tokens, int(_cap))   # never exceed the shown bound
     _capkey = getattr(_COST_CAP, "mission", None)
-    _est_agg = max_tokens + 2000                 # conservative incl. input
-    _cap_reserve(_capkey, _est_agg)              # covers routed token raises too
     # BARS AUTO-ROUTER: if user_message provided, route to optimal model
     routed_model = None
     routed_base = None
@@ -676,6 +678,11 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     _enforce_key_host(api_key, base)
     use_or = bool(base) or ("/" in str(model) and not str(model).startswith("claude"))
     max_tokens = min(max_tokens, int(os.environ.get("BARS_MAX_TOKENS_CAP", "4096")))
+    # reserve against the aggregate bound only after route selection has fixed
+    # the final max_tokens (routed raises included) - the estimate always
+    # covers the routed maximum, never the pre-route amount
+    _est_agg = max_tokens + 2000                 # conservative incl. input
+    _cap_reserve(_capkey, _est_agg)
     _host = (base or "https://openrouter.ai/api/v1") if use_or else "https://api.anthropic.com"
     paid = _paid_route(_host)
     hold = None
@@ -757,17 +764,17 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
             else:
                 raise
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-        _u = data.get("usage") or {}
+        _u = data.get("usage")
+        _u = _u if isinstance(_u, dict) else {}   # malformed usage can never 500 post-spend
+        try:
+            _actual = int(_u["prompt_tokens"]) + int(_u["completion_tokens"])
+            assert _actual >= 0
+        except Exception:
+            _actual = est_in + max_tokens   # missing/invalid usage: settle at estimate
         if hold:
-            try:
-                _actual = int(_u["prompt_tokens"]) + int(_u["completion_tokens"])
-                assert _actual >= 0
-            except Exception:
-                _actual = est_in + max_tokens   # missing/invalid usage: settle at estimate
             BUDGET.settle(hold, _actual)
             hold = None
-        _cap_settle(_capkey, _est_agg,
-                    int(_u.get("prompt_tokens", 0)) + int(_u.get("completion_tokens", 0)))
+        _cap_settle(_capkey, _est_agg, _actual)   # same actuals: no receipt divergence
         LAST_USAGE.update({"tokens_in": _u.get("prompt_tokens", 0),
                            "tokens_out": _u.get("completion_tokens", 0),
                            "model": str(model)})
@@ -814,17 +821,17 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                   "ms": int((time.time() - t0) * 1000)})
         raise
     txt = "".join(b.get("text", "") for b in data.get("content", []))
-    _u = data.get("usage") or {}
-    _cap_settle(_capkey, _est_agg,
-                int(_u.get("input_tokens", 0)) + int(_u.get("output_tokens", 0)))
+    _u = data.get("usage")
+    _u = _u if isinstance(_u, dict) else {}       # malformed usage can never 500 post-spend
+    try:
+        _actual = int(_u["input_tokens"]) + int(_u["output_tokens"])
+        assert _actual >= 0
+    except Exception:
+        _actual = est_in + max_tokens       # missing/invalid usage: settle at estimate
     if hold:
-        try:
-            _actual = int(_u["input_tokens"]) + int(_u["output_tokens"])
-            assert _actual >= 0
-        except Exception:
-            _actual = est_in + max_tokens       # missing/invalid usage: settle at estimate
         BUDGET.settle(hold, _actual)
         hold = None
+    _cap_settle(_capkey, _est_agg, _actual)   # same actuals: no receipt divergence
     LAST_USAGE.update({"tokens_in": _u.get("input_tokens", 0),
                        "tokens_out": _u.get("output_tokens", 0),
                        "model": str(CONFIG["model"]), "lane": "static",
@@ -1249,7 +1256,7 @@ def squad_watch(pid):
     if not ok:
         p.update(status="FAILED", t_end=time.time(),
                  debrief="The whole squad came back empty-handed. That's on me.")
-        hue.event("fail"); persist_missions(); return
+        hue.event("fail"); _cap_release(pid); persist_missions(); return
     parts = []
     for c in ok:
         try:
@@ -1281,6 +1288,7 @@ def squad_watch(pid):
     p.update(status="COMPLETE", t_end=time.time(), debrief=deb,
              cost=round(sum(c.get("cost") or 0 for c in ok), 4) or None)
     hue.event("complete")
+    _cap_release(pid)
     persist_missions()
 
 def find_claude():
@@ -1712,6 +1720,8 @@ def run_internal_mission(m):
         m.update(status="FAILED", t_end=time.time(),
                  debrief=f"Job failed: {str(e)[:200]}")
         hue.event("fail")
+    if m.get("cap_key") and m.get("cap_key") == mid:
+        _cap_release(mid)                        # stale aggregate caps never linger
     persist_missions()
 
 def _mission_lock(mid):
@@ -2039,6 +2049,18 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin", "")
         if origin and not _origin_allowed(origin):
             self._json({"error": "forbidden"}, 403); return False
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            n = 0
+        # unauthenticated bodies are capped small; authenticated clients get
+        # the media ceiling (/stt audio). Prevents memory exhaustion pre-auth.
+        cap = int(os.environ.get("BARS_MAX_BODY_AUTH", str(16 * 1024 * 1024))) \
+            if _token_ok(self.headers) else \
+            int(os.environ.get("BARS_MAX_BODY_PUBLIC", "65536"))
+        if n > cap:
+            self._json({"error": f"request body too large (limit {cap} bytes)"}, 413)
+            return False
         return True
 
     def _json(self, obj, code=200):
@@ -2591,6 +2613,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": "squad split failed: " + str(e)[:120]}, 500); return
                 finally:
                     _COST_CAP.mission = None
+                    _cap_release("presplit")
                 if data.get("plan"):                       # dry-run: show the split only
                     self._json({"plan": subs}); return
                 pid = start_squad(core, subs, cost_bound=_approved_bound)

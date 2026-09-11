@@ -31,11 +31,13 @@ static visual reference/fallback only — it is not a backend.
 ```bash
 cd /opt/bars
 git clone https://github.com/executiveusa/pauli-tars-demo-.git app
-cd app && git checkout <merged-main-SHA>
-export BARS_GIT_SHA=$(git rev-parse --short HEAD)
-docker build -t bars-sovereign:$BARS_GIT_SHA -t bars-sovereign:latest .
+cd app && git checkout <merged-main-SHA>   # full 40-char SHA, never a short ref
+# Immutable image identity: tag is the exact 40-char SHA, provenance is baked
+# at build time (/app/.bars_sha). No mutable tags, no env-echo identity.
+export BARS_GIT_SHA=$(git rev-parse HEAD)
+docker build --build-arg BARS_SHA=$BARS_GIT_SHA -t bars-sovereign:$BARS_GIT_SHA .
 docker run -d --name bars --restart unless-stopped \
-  --env-file /opt/bars/.env -e BARS_GIT_SHA=$BARS_GIT_SHA \
+  --env-file /opt/bars/.env \
   -v /opt/bars/data:/data -p 127.0.0.1:4321:4321 \
   --memory 512m --cpus 0.75 --pids-limit 128 \
   bars-sovereign:$BARS_GIT_SHA
@@ -62,7 +64,7 @@ is in the PR body.
 ## Deploy / rollback (executable)
 
 ```bash
-/opt/bars/app/deploy/deploy.sh <git-sha>     # snapshot data, build, health-gated swap
+/opt/bars/app/deploy/deploy.sh <full-40-char-git-sha>  # snapshot data, build, health-gated swap
 /opt/bars/app/deploy/rollback.sh             # image-only rollback (data/audit preserved)
 /opt/bars/app/deploy/rollback.sh --with-data # also restore pre-deploy data snapshot
 ```

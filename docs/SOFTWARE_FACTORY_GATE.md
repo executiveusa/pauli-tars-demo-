@@ -13,7 +13,7 @@ independent gates before anything ships. The builder never self-approves.
      PASS, PASS WITH DISPOSITIONS, BLOCKED, NOT RUN.
    - Managed `VIBE_REVIEW` block in `AGENTS.md` (markers VIBE_REVIEW:START/END).
    - Independent CI: `.github/workflows/vibe-code-review.yml` calls the central
-     reusable workflow `executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@main`
+     reusable workflow `executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@22af4cb62c97959276055f3b3d977d7aa993adef` (SHA-pinned, never a floating branch)
      on every non-draft PR. Policy in `.opencodereview/rule.json` (correctness,
      security, data loss, secret exposure, rollback, tests-proving-behavior;
      "Do not approve a builder's own work").

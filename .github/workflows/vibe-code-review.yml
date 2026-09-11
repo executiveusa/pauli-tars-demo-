@@ -12,6 +12,6 @@ permissions:
 jobs:
   review:
     if: github.event.pull_request.draft == false
-    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@main
+    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@22af4cb62c97959276055f3b3d977d7aa993adef
     secrets:
       llm_token: ${{ secrets.OPENROUTER_API_KEY }}
