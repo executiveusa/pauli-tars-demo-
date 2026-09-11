@@ -594,7 +594,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var bind=j.need_confirmation.bind_payload||payloadObj;"
     b"approve(j.need_confirmation,JSON.stringify(bind,null,2),function(){"
     b"return mintAndRun(j.need_confirmation.action,bind,p,{u:url,m:m,h:h,b:o.body})"
-    b".then(function(r2){resolve(r2||r)})},function(){resolve(r)})})}"
+    b".then(function(r2){resolve(r2||r)}).catch(function(){resolve(r)})},function(){resolve(r)})})}"
     b"return r})}"
     b"if(r.ok&&same&&(p==='/chat'||p==='/see')){return r.clone().json().then(function(j){"
     # generated mission: separate displayed confirmation, full payload shown
@@ -602,7 +602,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"approve({action:'mission.exec',policy:'run a mission (spends model tokens)',recipient:'/brief',cost_bound:8192,ttl_seconds:120},"
     b"JSON.stringify(mbind,null,2),function(){"
     b"return mintAndRun('mission.exec',mbind,'/brief',{u:'/brief',m:'POST',h:{'content-type':'application/json'},b:JSON.stringify(mbind)})"
-    b".then(function(){resolve(r)})},function(){resolve(r)})})}"
+    b".then(function(){resolve(r)}).catch(function(){resolve(r)})},function(){resolve(r)})})}"
     b"return r}).catch(function(){return r})}"
     b"return r})}})();</script>")
 

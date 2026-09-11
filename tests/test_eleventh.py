@@ -54,8 +54,13 @@ import json as _json
 tmpdir = tempfile.mkdtemp(prefix="gate-noagents-")
 try:
     shutil.copytree(os.path.join(ROOT, ".github"), os.path.join(tmpdir, ".github"))
-    shutil.copy(os.path.join(ROOT, "scripts/check_release_gate.py"), os.path.join(tmpdir, "gate.py"))
-    r = subprocess.run([sys.executable, os.path.join(tmpdir, "gate.py")],
+    # the script resolves ROOT as parents[1] of its own path: keep the
+    # scripts/ layout so ROOT == tmpdir (no AGENTS.md by construction)
+    os.makedirs(os.path.join(tmpdir, "scripts"))
+    shutil.copy(os.path.join(ROOT, "scripts/check_release_gate.py"),
+                os.path.join(tmpdir, "scripts", "check_release_gate.py"))
+    assert not os.path.exists(os.path.join(tmpdir, "AGENTS.md"))
+    r = subprocess.run([sys.executable, os.path.join(tmpdir, "scripts", "check_release_gate.py")],
                        capture_output=True, text=True, cwd=tmpdir)
     check("gate: structured failure without AGENTS.md",
           "missing AGENTS.md" in (r.stdout + r.stderr) and "Traceback" not in (r.stdout + r.stderr))
@@ -92,7 +97,9 @@ else:
 os.unlink(jspath)
 check("shim: outer table array terminated (was dead-on-arrival)", "after approval']]." in js or "after approval']]." in srv)
 check("shim: DENY settles the wrapper promise (both confirm paths)",
-      js.count("if(deny)deny()") == 1 and js.count("function(){resolve(r)}") == 3)
+      js.count("if(deny)deny()") == 1 and js.count(",function(){resolve(r)}") == 2)
+check("shim: rejected mintAndRun also settles the wrapper promise",
+      js.count(".catch(function(){resolve(r)})") == 2)
 check("shim: confirmed missions carry the original payload (image)",
       "Object.assign({},payloadObj,{brief:j.deployed.brief})" in js and
       "mintAndRun('mission.exec',mbind" in js)
