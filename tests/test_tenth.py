@@ -57,6 +57,8 @@ patch = ('        if user.startswith("MOCKSAY "):\n'
          '            txt = user[len("MOCKSAY "):]\n'
          '        elif user.strip().startswith("research presplit race"):\n'
          '            txt = "[\\"part alpha\\", \\"part beta\\"]"\n'
+         '        elif user.startswith("Brief: "):\n'
+         '            txt = \'{"critique": "thin sourcing.", "follow_up": "research the biggest gap v13"}\'\n'
          '        else:\n'
          '            txt = f"MOCK-REPLY[{model}]: " + user[:60]')
 assert anchor in mocksrc, "mock anchor drifted"
@@ -103,6 +105,37 @@ threads = [threading.Thread(target=squad_call, args=(t,)) for t in ("A", "B")]
 ok = all(results.get(t, (0, {}, {}))[0] == 200 and results[t][2].get("squad") for t in ("A", "B"))
 check("adv-v9-1b two concurrent squad confirmations both succeed independently",
       ok, json.dumps({t: results.get(t, (0,))[0] for t in ("A", "B")}))
+# adv-v9-9: /followup registers the exact displayed 8192 bound (matching /act and /brief)
+H = mint("mission.exec", {"brief": "research followup bound v13"}, "/brief")
+s, h, b = req("POST", "/brief", {"brief": "research followup bound v13"}, H)
+mid9 = b.get("id")
+st = None
+for _ in range(80):
+    s, h, b = req("GET", f"/mission/{mid9}", headers=TOK)
+    st = b.get("status")
+    if st in ("COMPLETE", "FAILED"): break
+    time.sleep(0.25)
+fu = b.get("follow_up") or ""
+check("adv-v9-9a mission completes with a proposed follow-up",
+      st == "COMPLETE" and fu == "research the biggest gap v13", f"{st} fu={fu[:60]}")
+s, h, b = req("POST", "/followup", {"id": mid9}, TOK)
+check("adv-v9-9b follow-up without confirmation: 409 displays the 8192 bound",
+      s == 409 and (b.get("need_confirmation") or {}).get("cost_bound") == 8192,
+      f"{s} {b.get('need_confirmation')}")
+s, h, b = req("POST", "/followup", {"id": mid9}, mint("mission.exec", {"id": mid9}, "/followup"))
+nid9 = b.get("id")
+check("adv-v9-9c follow-up with exact confirmation starts", s == 200 and bool(nid9), f"{s} {str(b)[:80]}")
+s, h, b = req("GET", f"/mission/{nid9}", headers=TOK)
+check("adv-v9-9d displayed bound registered into start_mission (cap_key set)",
+      bool(b.get("cap_key")), f"cap_key={b.get('cap_key')}")
+st = None
+for _ in range(80):
+    s, h, b = req("GET", f"/mission/{nid9}", headers=TOK)
+    st = b.get("status")
+    if st in ("COMPLETE", "FAILED"): break
+    time.sleep(0.25)
+check("adv-v9-9e bounded follow-up completes under its cap", st == "COMPLETE", str(st))
+
 srv.terminate(); srv.wait(5); mock.terminate()
 
 # adv-v9-2: OCR supply-chain pin is two levels deep and documented honestly
@@ -233,6 +266,31 @@ td = open(os.path.join(ROOT, "tests", "test_deploy_docker.sh")).read()
 check("adv-v9-8 docker test covers failed-health, --with-data cycle, snapshot fallback",
       "failed-health rollback" in td and "--with-data" in td
       and "snapshotting via" in td and "rolled-back-from.sha" in td, "")
+
+# adv-v9-10: abort landing before the first model call still reaches a
+# persisted terminal state (was: stuck ABORTING forever, no model call made)
+m10 = {"id": "deadrace", "brief": "race window", "kind": "OPS", "events": [],
+       "_abort": True, "status": "ABORTING", "t_start": time.time(), "t_end": None,
+       "agent": "CASE", "parent": None, "cap_key": None}
+server.MISSIONS["deadrace"] = m10
+called10 = []
+_orig_ac = server.anthropic_chat
+server.anthropic_chat = lambda *a, **k: called10.append(1) or "SHOULD-NOT-HAPPEN"
+try:
+    server.run_internal_mission(m10)
+finally:
+    server.anthropic_chat = _orig_ac
+_rec = None
+try:
+    _idx = json.load(open(os.path.join(server.MISSIONS_DIR, "index.json"))) or []
+    _rec = next((x for x in _idx if x.get("id") == "deadrace"), None)
+except Exception:
+    pass
+check("adv-v9-10 pre-first-call abort: ABORTED + persisted, zero model calls",
+      m10["status"] == "ABORTED" and m10["t_end"] and not called10
+      and _rec is not None and _rec.get("status") == "ABORTED",
+      f"status={m10['status']} calls={len(called10)} persisted={(_rec or {}).get('status')}")
+del server.MISSIONS["deadrace"]
 
 print(f"{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)

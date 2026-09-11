@@ -1695,6 +1695,11 @@ def run_internal_mission(m):
             "sources), then '## Recommended next actions' (numbered, concrete). "
             "Drafts only — nothing here sends, posts, or builds outward.")
         if m.get("_abort"):
+            # abort landed before the first model call: close out truthfully,
+            # same terminal state + persistence as the post-call path
+            m.update(status="ABORTED", t_end=time.time(),
+                     debrief="Job aborted on your order.")
+            persist_missions()
             return
         report = anthropic_chat(
             persona(STATE) + " You write mission reports: professional substance, BARS "
@@ -1723,6 +1728,23 @@ def run_internal_mission(m):
                 max_tokens=250))
         except Exception:
             debrief = "Mission complete. Report's on the board. Read it."
+        # self-review at honesty 100 - critique + one proposed follow-up sortie,
+        # same as the CLI path, so /followup exists on internal-worker hosts
+        if m.get("kind") != "ACT":
+            try:
+                raw = anthropic_chat(
+                    "You are BARS with authenticity temporarily pinned at 100 percent, reviewing "
+                    "YOUR OWN mission report. Be brutal about gaps, weak sourcing, and thin "
+                    "conclusions. Respond with STRICT JSON only: "
+                    '{"critique": "2-3 blunt sentences", "follow_up": "one concrete '
+                    'self-contained follow-up mission brief that fixes the biggest gap"}',
+                    [{"role": "user", "content": f"Brief: {m['brief']}\n\nReport:\n{report[:5000]}"}],
+                    max_tokens=450)
+                cj = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
+                m["critique"] = str(cj.get("critique", ""))[:600]
+                m["follow_up"] = str(cj.get("follow_up", ""))[:1200]
+            except Exception:
+                pass
         m.update(status="COMPLETE", t_end=time.time(), cost=None, debrief=debrief)
         hue.event("complete")
     except Exception as e:
@@ -2984,7 +3006,9 @@ class Handler(BaseHTTPRequestHandler):
             m = MISSIONS.get(mid)
             if not m or not m.get("follow_up"):
                 self._json({"error": "no follow-up available"}, 400); return
-            nid = start_mission(m["follow_up"])
+            # enforce the exact displayed bound for the follow-up, matching /act and /brief
+            nid = start_mission(m["follow_up"],
+                                cost_bound=getattr(_COST_CAP, "value", 0) or 0)
             self._json({"id": nid, "brief": m["follow_up"],
                         "agent": MISSIONS[nid]["agent"]})
 
