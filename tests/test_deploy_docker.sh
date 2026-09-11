@@ -37,8 +37,11 @@ cleanup() {
   fi
   docker compose -p "$PROJECT" -f "$ROOT/root/app/docker-compose.yml" down -v >/dev/null 2>&1 || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  for i in $(docker images -q "$IMG" | sort -u); do docker image rm -f "$i" >/dev/null 2>&1 || true; done
-  rm -rf "$ROOT"
+  # container-written state is uid-10001/0600: a non-root host user cannot
+  # remove it directly - chmod through a throwaway container first
+  docker run --rm -v "$ROOT":/x python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea \
+    sh -c "chmod -R 0777 /x" >/dev/null 2>&1 || true
+  rm -rf "$ROOT" 2>/dev/null || true
 }
 trap 'cleanup $?' EXIT
 

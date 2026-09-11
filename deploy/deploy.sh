@@ -26,7 +26,14 @@ cd "$APP"
 
 echo "[deploy] snapshot data -> $ROOT/backups/data-$SHA.tar.gz (deployment-linked)"
 mkdir -p "$ROOT/backups"
-tar -czf "$ROOT/backups/data-$SHA.tar.gz" -C "$DATA" .
+if ! tar -czf "$ROOT/backups/data-$SHA.tar.gz" -C "$DATA" . 2>/dev/null; then
+  # the container writes some state root/0600; a non-root docker host user
+  # (CI runners) cannot read it. Snapshot through the previous image instead.
+  docker image inspect "$IMG:current" >/dev/null 2>&1 || {
+    echo "[deploy] FATAL: data unreadable by host user and no previous image to snapshot through"; exit 1; }
+  echo "[deploy] host user cannot read all data files; snapshotting via $IMG:current"
+  docker run --rm -v "$DATA":/data:ro -v "$ROOT/backups":/backups "$IMG:current"     sh -c "tar -czf /backups/data-$SHA.tar.gz -C /data . && chmod 0666 /backups/data-$SHA.tar.gz"
+fi
 
 echo "[deploy] fetch + checkout $SHA"
 # refuse to mutate a dirty worktree: check BEFORE checkout, verify AFTER
