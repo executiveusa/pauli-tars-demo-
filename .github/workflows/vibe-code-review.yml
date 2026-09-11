@@ -19,11 +19,10 @@ jobs:
     uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
-      model: google/gemma-4-26b-a4b-it:free   # verified free at runtime (cost $0, no top-up);
-                                         # non-reasoning: hidden-thinking free models stalled
-                                         # the 30-min review job; the gpt-5.3-codex default
-                                         # drained the account
-      review_concurrency: "1"   # free-tier upstream 429s under parallel fan-out;
-                                # serial review keeps the burst under the shared cap
+      llm_url: https://api.groq.com/openai/v1/chat/completions   # Groq free tier ($0):
+                                         # OpenRouter free pools are upstream-saturated (429/503)
+                                         # and its hidden-thinking models stall the 30-min job
+      model: openai/gpt-oss-120b   # verified live on Groq free: 2s, verdict-first, no spend
+      review_concurrency: "1"   # serial review keeps the burst under free-tier token/min caps
     secrets:
-      llm_token: ${{ secrets.OPENROUTER_API_KEY }}
+      llm_token: ${{ secrets.GROQ_API_KEY }}
