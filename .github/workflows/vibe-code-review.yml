@@ -19,11 +19,12 @@ jobs:
     uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
-      llm_url: https://api.groq.com/openai/v1/chat/completions   # Groq free tier ($0):
-                                         # OpenRouter free pools are upstream-saturated (429/503)
-                                         # and its hidden-thinking models stall the 30-min job
-      model: qwen/qwen3.8-27b   # verified live on Groq free: 1s, verdict-first, no spend;
-                                         # gpt-oss-120b hit its per-model daily token cap (TPD 200k, org-shared)
+      model: google/gemma-4-26b-a4b-it:free   # verified free at runtime (cost $0, no top-up);
+                                         # non-reasoning, verdict-first. Upstream pool 429/503s
+                                         # in bursts - retried on a cadence until a window opens.
+                                         # Groq lane tried and ruled out: gpt-oss-120b org-shared
+                                         # daily cap exhausted; qwen3.x OTPM 1000 < tool max_tokens;
+                                         # gpt-oss-20b hidden reasoning eats output budget.
       review_concurrency: "1"   # serial review keeps the burst under free-tier token/min caps
     secrets:
-      llm_token: ${{ secrets.GROQ_API_KEY }}
+      llm_token: ${{ secrets.OPENROUTER_API_KEY }}
