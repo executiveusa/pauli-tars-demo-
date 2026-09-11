@@ -22,7 +22,7 @@ static visual reference/fallback only — it is not a backend.
      `GROQ_API_KEY`)
    - `BARS_OPERATOR_TOKEN` = `openssl rand -hex 32` (store in Infisical as
      `BARS_OPERATOR_TOKEN`)
-   - `BARS_ALLOWED_ORIGINS=https://barsdemo.netlify.app`
+   - `BARS_ALLOWED_ORIGINS=https://barsdemo.netlify.app` (the cockpit itself is served same-origin via Caddy at https://bars.thepaulieffect.com, which needs no allowlist entry; only cross-origin callers are listed)
 4. DNS: `bars.thepaulieffect.com` A record → `31.220.58.212`, DNS-only
    (grey cloud) in the Cloudflare zone `96712684919a639674c22fee58732ed9`.
 
@@ -59,17 +59,21 @@ curl -s -X POST https://bars.thepaulieffect.com/chat ...   # real question → f
 Full gauntlet (visual, missions, memory, restart persistence, failure tests)
 is in the PR body.
 
-## Rollback
-
-One git ref + one image:
+## Deploy / rollback (executable)
 
 ```bash
-docker rm -f bars
-docker run -d --name bars ... bars-sovereign:<previous-SHA>
-# or: cd /opt/bars/app && git checkout <previous-SHA> && rebuild
+/opt/bars/app/deploy/deploy.sh <git-sha>     # snapshot data, build, health-gated swap
+/opt/bars/app/deploy/rollback.sh             # image-only rollback (data/audit preserved)
+/opt/bars/app/deploy/rollback.sh --with-data # also restore pre-deploy data snapshot
 ```
 
-State survives rollback: everything durable lives in /opt/bars/data.
+Both scripts are health-gated and use docker-compose.yml as the single source
+of hardening (read-only rootfs, tmpfs /tmp, no-new-privileges, cap_drop ALL,
+non-root uid 10001, mem/cpu/pids caps). The running SHA is recorded in
+/opt/bars/current.sha; rollback records the abandoned SHA in
+/opt/bars/rolled-back-from.sha. Durable state (receipts, budget ledger,
+missions, memory) always lives in /opt/bars/data and is never touched by a
+default rollback.
 
 ## Notes
 

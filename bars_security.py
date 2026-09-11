@@ -125,28 +125,34 @@ class BudgetLedger:
         self.path = path
         self.daily_budget = int(daily_budget)
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self._mem = threading.Lock()
+        # dedicated lockfile: never replaced/unlinked, so the flock is stable
+        # across processes. os.replace() on the data file would otherwise
+        # orphan the locked inode.
+        self._lock_path = path + ".lock"
 
     def _locked(self, fn):
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+        with self._mem:                       # in-process threads
+            fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
             try:
-                with os.fdopen(os.dup(fd), "r") as f:
-                    state = json.load(f)
-            except Exception:
-                state = {"v": VERSION, "day": "", "used": 0, "holds": {}}
-            day = time.strftime("%Y-%m-%d")
-            if state.get("day") != day:      # roll the daily counter BEFORE fn
-                state["day"], state["used"], state["holds"] = day, 0, {}
-            out = fn(state)
-            fd2, tmp = tempfile.mkstemp(prefix=".budget-", dir=os.path.dirname(self.path) or ".")
-            with os.fdopen(fd2, "w") as f:
-                json.dump(state, f)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, self.path)
-            return out
-        finally:
-            os.close(fd)
+                fcntl.flock(fd, fcntl.LOCK_EX)   # cross-process
+                try:
+                    with open(self.path) as f:   # re-read under lock
+                        state = json.load(f)
+                except Exception:
+                    state = {"v": VERSION, "day": "", "used": 0, "holds": {}}
+                day = time.strftime("%Y-%m-%d")
+                if state.get("day") != day:      # roll the daily counter BEFORE fn
+                    state["day"], state["used"], state["holds"] = day, 0, {}
+                out = fn(state)
+                fd2, tmp = tempfile.mkstemp(prefix=".budget-", dir=os.path.dirname(self.path) or ".")
+                with os.fdopen(fd2, "w") as f:
+                    json.dump(state, f)
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, self.path)
+                return out
+            finally:
+                os.close(fd)
 
     def used(self):
         return self._locked(lambda s: int(s.get("used", 0)))
@@ -190,18 +196,53 @@ class ReceiptLedger:
         self.write_failures = 0
         self.last_error = None
         self._key = self._load_key(key_path)
-        self._prev = self._tail_hmac()
+        # durable chain state: survives restarts; checkpoint lines anchor
+        # continuity across rotations so deletion/truncation is detectable.
+        self._state_path = path + ".state.json"
+        st = self._load_state()
+        self._seq = st.get("seq", 0)
+        self._prev = st.get("prev", "")
+        tail = self._tail_hmac()
+        if tail and tail != self._prev:
+            # file tail disagrees with durable state: tamper or truncation
+            self.write_failures += 1
+            self.last_error = "chain-state mismatch at startup"
+        elif not self._prev and tail:
+            self._prev = tail
 
     def _load_key(self, key_path):
         try:
             with open(key_path, "rb") as f:
-                return f.read().strip()
+                k = f.read().strip()
+            if len(k) >= 32:
+                return k
+        except FileNotFoundError:
+            pass
         except Exception:
-            k = secrets.token_bytes(32)
-            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as f:
-                f.write(k.hex().encode())
-            return k.hex().encode()
+            pass
+        # missing or unreadable/corrupt: (re)generate. O_EXCL would crash on
+        # a pre-existing empty file or a create race, so write via temp+replace.
+        k = secrets.token_bytes(32).hex().encode()
+        fd, tmp = tempfile.mkstemp(prefix=".rkey-", dir=os.path.dirname(key_path) or ".")
+        with os.fdopen(fd, "wb") as f:
+            f.write(k)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, key_path)
+        return k
+
+    def _load_state(self):
+        try:
+            with open(self._state_path) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_state(self):
+        fd, tmp = tempfile.mkstemp(prefix=".rstate-", dir=os.path.dirname(self.path) or ".")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"seq": self._seq, "prev": self._prev}, f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self._state_path)
 
     def _tail_hmac(self):
         try:
@@ -218,39 +259,61 @@ class ReceiptLedger:
                 os.replace(src, dst)
         if os.path.exists(self.path):
             os.replace(self.path, f"{self.path}.1")
-        self._prev = ""
+        # anchor the new file to the rotated one's last hmac + seq: a break
+        # in continuity across rotation is detectable, and the chain resumes.
+        ckpt = {"kind": "_checkpoint", "prev_file_hmac": self._prev,
+                "seq": self._seq, "ts": time.time()}
+        core = json.dumps(ckpt, sort_keys=True)
+        mac = hmac.new(self._key, (self._prev + core).encode(), hashlib.sha256).hexdigest()
+        ckpt["_h"] = mac
+        with open(self.path, "w") as f:
+            f.write(json.dumps(ckpt) + "\n")
+        os.chmod(self.path, 0o600)
+        self._prev = mac
 
     def append(self, ev):
         ev = dict(ev)
         ev.setdefault("ts", time.time())
-        line_core = json.dumps(ev, sort_keys=True)
-        mac = hmac.new(self._key, (self._prev + line_core).encode(), hashlib.sha256).hexdigest()
-        ev["_h"] = mac
-        line = json.dumps(ev) + "\n"
         try:
             with self._lock:
+                # rotate FIRST: the checkpoint anchors the previous chain tip,
+                # then this event chains from the checkpoint under one lock
                 if os.path.exists(self.path) and os.path.getsize(self.path) > self.MAX_BYTES:
                     self._rotate()
+                self._seq += 1
+                ev["seq"] = self._seq
+                core = json.dumps(ev, sort_keys=True)
+                mac = hmac.new(self._key, (self._prev + core).encode(), hashlib.sha256).hexdigest()
+                ev["_h"] = mac
                 fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
                 try:
-                    os.write(fd, line.encode())
+                    os.write(fd, (json.dumps(ev) + "\n").encode())
                     os.fsync(fd)
                 finally:
                     os.close(fd)
                 self._prev = mac
+                self._save_state()
         except Exception as e:
             self.write_failures += 1
             self.last_error = f"{type(e).__name__}: {e}"
 
     def verify(self, n=500):
-        """Check the HMAC chain over the tail; returns (checked, bad)."""
+        """Check HMAC chain + sequence continuity over the tail; (checked, bad)."""
         prev, checked, bad = "", 0, 0
+        last_seq = None
         for ev in self.tail(n):
             mac = ev.pop("_h", None)
+            sq = ev.get("seq")                 # seq stays inside the HMAC core
+            if ev.get("kind") == "_checkpoint":
+                prev = ev.get("prev_file_hmac", "")   # anchored: chain across rotation
             core = json.dumps(ev, sort_keys=True)
             want = hmac.new(self._key, (prev + core).encode(), hashlib.sha256).hexdigest()
             if mac != want:
                 bad += 1
+            if last_seq is not None and isinstance(sq, int) and sq != last_seq + 1:
+                bad += 1                       # gap: deletion detected
+            if isinstance(sq, int):
+                last_seq = sq
             prev = mac or ""
             checked += 1
         return checked, bad
@@ -310,11 +373,18 @@ class ConfirmationStore:
             "expires_at": time.time() + ttl,
         }
         with self._lock:
+            self._sweep_locked()
             self._items[obj["id"]] = obj
         return obj
 
+    def _sweep_locked(self):
+        now = time.time()
+        for k in [k for k, v in self._items.items() if v["expires_at"] < now]:
+            del self._items[k]
+
     def consume(self, cid, action, payload):
         with self._lock:
+            self._sweep_locked()
             obj = self._items.pop(cid, None)     # single-use, always consumed
         if not obj:
             raise RuntimeError("confirmation unknown or already used")

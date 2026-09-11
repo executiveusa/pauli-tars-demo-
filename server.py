@@ -379,10 +379,18 @@ def provider_models():
 FREE_PROVIDERS = [h.strip().lower() for h in
                   os.environ.get("BARS_FREE_PROVIDERS", "api.groq.com").split(",")
                   if h.strip()]
+FREE_PROVIDERS_PARSED = frozenset(h.split(":")[0] for h in FREE_PROVIDERS)
 
 def _paid_route(host):
+    """Exact host classification: a provider URL is free only when its parsed
+    hostname exactly equals an allowlisted host. Substring matches
+    (api.groq.com.evil.com) are paid -> fail-closed."""
     h = (host or "").lower()
-    return not any(f in h for f in FREE_PROVIDERS)
+    if "://" in h:
+        from urllib.parse import urlparse
+        h = (urlparse(h).hostname or "").lower()
+    h = h.split(":")[0].strip()
+    return h not in FREE_PROVIDERS_PARSED
 
 SESSIONS = sec.SessionStore()
 BUDGET = sec.BudgetLedger(os.path.join(DATA, "budget.json"),
@@ -447,26 +455,39 @@ def _token_ok(headers, mutate=False):
 # navigations, and prompts once on 401 (never for the public status polls).
 AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"function ck(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):''}"
-    b"var SENS={'/brief':'mission.exec','/squad':'squad.exec','/tools':'tools.write'};"
+    b"function sameOrigin(u){try{return new URL(u,location.href).origin===location.origin}catch(e){return false}}"
+    b"function approve(need,retry){"
+    b"var d=document.createElement('div');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:monospace';"
+    b"var c=document.createElement('div');c.style.cssText='background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:440px;border-radius:8px';"
+    b"var t=document.createElement('div');t.innerHTML='<b style=\\'color:#f59e0b\\'>BARS - HUMAN APPROVAL REQUIRED</b><br><br>Action: '+(need.action||'')+'<br>'+(need.policy||'')+'<br><br>This runs only on your explicit approval.';"
+    b"var okb=document.createElement('button');okb.textContent='APPROVE + RUN';okb.style.cssText='background:#f59e0b;color:#000;padding:8px 14px;margin:14px 10px 0 0;cursor:pointer;border:0;border-radius:4px;font-weight:bold';"
+    b"var nob=document.createElement('button');nob.textContent='DENY';nob.style.cssText='background:#333;color:#eee;padding:8px 14px;margin-top:14px;cursor:pointer;border:1px solid #666;border-radius:4px';"
+    b"nob.onclick=function(){d.remove()};"
+    b"okb.onclick=function(){okb.disabled=true;okb.textContent='RUNNING...';"
+    b"retry().finally(function(){d.remove()})};"
+    b"c.appendChild(t);c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d)}"
     b"var of=window.fetch.bind(window);"
     b"window.fetch=function(u,o){o=o||{};var url=(typeof u==='string')?u:(u&&u.url)||'';"
-    b"var same=url[0]==='/'||url.indexOf(location.origin)===0;"
-    b"var p=url.replace(location.origin,'').split('?')[0];"
+    b"var same=sameOrigin(url);"
+    b"var p=new URL(url,location.href).pathname;"
     b"var h=new Headers(o.headers||{});var m=(o.method||'GET').toUpperCase();"
     b"if(same&&m!=='GET'){var c=ck('bars_csrf');if(c)h.set('X-CSRF-Token',c);}o.headers=h;"
-    b"var go=function(){return of(u,o).then(function(r){"
+    b"var exec=function(){return of(u,o)};"
+    b"return exec().then(function(r){"
     b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'){"
     b"var v=window.prompt('BARS operator token');"
     b"if(v){return of('/api/session',{method:'POST',headers:{'content-type':'application/json'},"
-    b"body:JSON.stringify({token:v})}).then(function(l){if(l.ok){return window.fetch(u,o)}return r})}}"
-    b"return r})};"
-    b"if(same&&m==='POST'&&SENS[p]&&!h.has('X-BARS-Confirmation')){"
-    b"var payload={};try{payload=JSON.parse(o.body||'{}')}catch(e){}"
+    b"body:JSON.stringify({token:v})}).then(function(l){if(l.ok){return window.fetch(u,o)}return r})}"
+    b"return r}"
+    b"if(r.status===409&&same){return r.clone().json().then(function(j){"
+    b"if(j&&j.need_confirmation){return new Promise(function(resolve){"
+    b"approve(j.need_confirmation,function(){"
     b"return of('/api/confirmations',{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':ck('bars_csrf')},"
-    b"body:JSON.stringify({action:SENS[p],payload:payload,recipient:p})}).then(function(c){return c.json().then(function(cj){"
-    b"if(cj&&cj.id){var h2=new Headers(o.headers||{});h2.set('X-BARS-Confirmation',cj.id);o.headers=h2;}return go()})})"
-    b".catch(function(){return go()})}"
-    b"return go()}})();</script>")
+    b"body:JSON.stringify({action:j.need_confirmation.action,payload:(function(){try{return JSON.parse(o.body||'{}')}catch(e){return{}}})(),recipient:p})})"
+    b".then(function(c){return c.json()}).then(function(cj){"
+    b"if(cj&&cj.id){var h2=new Headers(o.headers||{});h2.set('X-BARS-Confirmation',cj.id);o.headers=h2;}"
+    b"resolve(exec())}).catch(function(){resolve(r)})})})}"
+    b"return r})}return r})}})();</script>")
 
 def _inject_auth_shim(body):
     idx = body.lower().find(b"</head>")
@@ -549,8 +570,8 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     _host = (base or "https://openrouter.ai/api/v1") if use_or else "https://api.anthropic.com"
     paid = _paid_route(_host)
     hold = None
+    est_in = (len(system) + sum(len(str(m.get("content", ""))) for m in messages)) // 4
     if paid:
-        est_in = (len(system) + sum(len(str(m.get("content", ""))) for m in messages)) // 4
         hold = _paid_gate(str(model), est_in + max_tokens)
     t0 = time.time()
     if use_or:
@@ -601,8 +622,19 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                              "User-Agent": "BARS-Pauli/1.0",
                              "HTTP-Referer": "https://pauli.effect",
                              "X-Title": "BARS Pauli"})
-                with urllib.request.urlopen(req, timeout=90) as r:
-                    data = json.load(r)
+                try:
+                    with urllib.request.urlopen(req, timeout=90) as r:
+                        data = json.load(r)
+                except Exception as e2:
+                    # the fallback failed too: release its hold and receipt the
+                    # attempt, then surface the failure truthfully
+                    if hold:
+                        BUDGET.release(hold); hold = None
+                    _receipt({"kind": "chat_attempt", "lane": "static-fallback",
+                              "model": str(model), "paid": _paid_route(fhost),
+                              "ok": False, "error": str(e2)[:200],
+                              "ms": int((time.time() - t0) * 1000)})
+                    raise
             else:
                 raise
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
@@ -954,6 +986,7 @@ AUDIO_TAG = re.compile(r"\[[a-z][a-z ]{1,24}\]")
 
 MISSIONS = {}          # id -> dict
 RUNNING = {}           # id -> Popen
+LOCK_FDS = {}          # id -> mission lock fd (held for the whole run)
 MISSIONS_LOCK = threading.Lock()
 _RESUME = []           # mission ids to resume after restart recovery
 
@@ -1544,6 +1577,14 @@ def _mission_lock(mid):
         os.close(fd)
         return None
 
+def _release_mission_lock(mid):
+    fd = LOCK_FDS.pop(mid, None)
+    if fd is not None:
+        try:
+            os.close(fd)            # releases the flock
+        except OSError:
+            pass
+
 def run_mission(mid):
     lock_fd = _mission_lock(mid)
     if lock_fd is None:
@@ -1551,6 +1592,7 @@ def run_mission(mid):
                              debrief="Duplicate run blocked by mission lock.")
         persist_missions()
         return
+    LOCK_FDS[mid] = lock_fd         # fd stays open (lock held) until completion
     m = MISSIONS[mid]
     mdir = os.path.join(MISSIONS_DIR, mid)
     wdir = os.path.join(WORKBENCH, mid)
@@ -1559,12 +1601,16 @@ def run_mission(mid):
     claude = find_claude()
     if not claude:
         if INTERNAL_WORKER:
-            run_internal_mission(m)
+            try:
+                run_internal_mission(m)
+            finally:
+                _release_mission_lock(mid)
         else:
             m.update(status="FAILED", t_end=time.time(),
                      debrief="Can't deploy — no coding CLI on this host and the "
                              "internal worker is disabled.")
             persist_missions()
+        _release_mission_lock(mid)
         return
 
     if m.get("kind") == "BUILD":
@@ -1701,6 +1747,7 @@ def run_mission(mid):
         watchdog.cancel()
         RUNNING.pop(mid, None)
         if m["status"] == "ABORTED":
+            _release_mission_lock(mid)
             persist_missions(); return
         if timed_out:
             raise subprocess.TimeoutExpired(cmd, MISSION_TIMEOUT)
@@ -1746,15 +1793,18 @@ def run_mission(mid):
             except Exception:
                 pass
         m.update(status="COMPLETE", t_end=time.time(), cost=cost, debrief=debrief)
+        _release_mission_lock(mid)
         hue.event("complete")
     except subprocess.TimeoutExpired:
         proc.kill(); RUNNING.pop(mid, None)
+        _release_mission_lock(mid)
         m.update(status="FAILED", t_end=time.time(),
                  debrief="Mission exceeded the fifteen-minute window. I aborted. "
                          "Break it into smaller jobs.")
         hue.event("fail")
     except Exception as e:
         RUNNING.pop(mid, None)
+        _release_mission_lock(mid)
         m.update(status="FAILED", t_end=time.time(),
                  debrief=f"Job failed: {str(e)[:200]}")
         hue.event("fail")
@@ -1867,17 +1917,36 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Headers",
-                             "authorization,content-type,x-bars-token")
+                             "authorization,content-type,x-bars-token,x-csrf-token,x-bars-confirmation")
             self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    LOGIN_FAILS = {}
+    LOGIN_LOCK = threading.Lock()
+
     def _login(self):
+        ip = self.client_address[0] if self.client_address else "?"
+        now = time.time()
+        with self.LOGIN_LOCK:
+            rec = self.LOGIN_FAILS.get(ip, {"n": 0, "t": 0.0})
+            # prune stale entries so the map cannot grow unbounded
+            if now - rec["t"] > 900:
+                rec = {"n": 0, "t": 0.0}
+            if rec["n"] >= 5 and now - rec["t"] < 60 * (2 ** min(rec["n"] - 5, 5)):
+                self._json({"error": "rate limited", "retry_after": 60}, 429)
+                return
         data = self._body()
         tok = str(data.get("token", ""))
         if not OPERATOR_TOKEN or not hmac.compare_digest(tok, OPERATOR_TOKEN):
-            time.sleep(0.7)                      # throttle brute force
+            with self.LOGIN_LOCK:
+                rec = self.LOGIN_FAILS.setdefault(ip, {"n": 0, "t": 0.0})
+                rec["n"] += 1
+                rec["t"] = time.time()
+            time.sleep(min(0.5 * (2 ** min(rec["n"], 4)), 8))   # backoff
             self._json({"error": "auth required"}, 401); return
+        with self.LOGIN_LOCK:
+            self.LOGIN_FAILS.pop(ip, None)
         sid, csrf = SESSIONS.create()
         tls = self.headers.get("X-Forwarded-Proto", "") == "https"
         secflag = "; Secure" if tls else ""
@@ -2250,11 +2319,10 @@ class Handler(BaseHTTPRequestHandler):
             img = data.get("image") or None    # screen frame riding along, if shared
             if not brief:
                 self._json({"error": "empty brief"}, 400); return
-            if not data.get("plan"):
-                sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
-                act = "squad.exec" if (sq0 or data.get("squad")) else "mission.exec"
-                if not self._need_confirmation(act, data):
-                    return
+            sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
+            act = "squad.exec" if (sq0 or data.get("squad")) else "mission.exec"
+            if not self._need_confirmation(act, data):
+                return
             sq = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if sq or data.get("squad"):
                 core = (sq.group(1).strip() if sq else brief) or brief
@@ -2597,7 +2665,7 @@ class DuplexHandler(BaseHTTPRequestHandler):
         if self.path.split("?")[0] != "/v1/chat/completions":
             self._deny(404); return
         auth = self.headers.get("Authorization", "")
-        if auth != f"Bearer {DUPLEX_TOKEN}":
+        if not hmac.compare_digest(auth, f"Bearer {DUPLEX_TOKEN}"):
             self._deny(); return
         try:
             n = int(self.headers.get("Content-Length", 0) or 0)

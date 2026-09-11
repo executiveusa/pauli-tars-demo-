@@ -1,29 +1,37 @@
 #!/bin/sh
-# BARS rollback: restore the previous image and the newest data snapshot.
+# BARS rollback. Default: swap to the previous image ONLY - post-deploy data,
+# receipts, budget ledger and missions are preserved untouched. Pass
+# --with-data to also restore the newest pre-deploy data snapshot (that
+# discards post-deploy state; use only when the new code corrupted data).
 set -eu
-PREV=$(docker image inspect bars-sovereign:rollback --format '{{.Id}}' 2>/dev/null || true)
-[ -n "$PREV" ] || { echo "[rollback] no previous image tagged"; exit 1; }
+APP=${BARS_ROOT:-/opt/bars}/app
+cd "$APP"
 
-SNAP=$(ls -1t /opt/bars/backups/data-*.tar.gz 2>/dev/null | head -1 || true)
-if [ -n "$SNAP" ]; then
-  echo "[rollback] restore data snapshot $SNAP"
-  tar -xzf "$SNAP" -C /opt/bars/data
+PREV_SHA=""
+[ -f ${BARS_ROOT:-/opt/bars}/previous.sha ] && PREV_SHA=$(cat ${BARS_ROOT:-/opt/bars}/previous.sha)
+docker image inspect bars-sovereign:rollback >/dev/null 2>&1 || { echo "[rollback] no previous image tagged"; exit 1; }
+
+if [ "${1:-}" = "--with-data" ]; then
+  SNAP=$(ls -1t ${BARS_ROOT:-/opt/bars}/backups/data-*.tar.gz 2>/dev/null | head -1 || true)
+  [ -n "$SNAP" ] || { echo "[rollback] no data snapshot found"; exit 1; }
+  echo "[rollback] ALSO restoring data snapshot $SNAP (post-deploy data lost)"
+  tar -xzf "$SNAP" -C ${BARS_ROOT:-/opt/bars}/data
+else
+  echo "[rollback] image-only: post-deploy data/receipts/audit preserved"
 fi
 
-echo "[rollback] restart bars on previous image"
-docker rm -f bars >/dev/null 2>&1 || true
-docker run -d --name bars --restart unless-stopped \
-  -p 127.0.0.1:4321:4321 \
-  -v /opt/bars/data:/data \
-  --env-file /opt/bars/.env \
-  --memory 512m --cpus 0.75 --pids-limit 128 \
-  --read-only --tmpfs /tmp:size=64m,mode=1777 \
-  --security-opt no-new-privileges:true --cap-drop ALL \
-  bars-sovereign:rollback >/dev/null
+CUR=$(cat ${BARS_ROOT:-/opt/bars}/current.sha 2>/dev/null || echo unknown)
+echo "$CUR" > ${BARS_ROOT:-/opt/bars}/rolled-back-from.sha
+echo "[rollback] rolling back from $CUR to ${PREV_SHA:-previous image}"
+
+docker tag bars-sovereign:rollback bars-sovereign:current
+[ -n "$PREV_SHA" ] && echo "$PREV_SHA" > ${BARS_ROOT:-/opt/bars}/current.sha
+
+BARS_IMAGE=bars-sovereign:rollback docker compose -f "$APP/docker-compose.yml" up -d --force-recreate
 
 i=0
 until curl -fsS -m 3 http://127.0.0.1:4321/health >/dev/null 2>&1; do
   i=$((i+1)); [ $i -gt 20 ] && { echo "[rollback] FAILED health"; exit 1; }
   sleep 2
 done
-echo "[rollback] OK: previous image healthy"
+echo "[rollback] OK: previous image healthy (rolled back from $CUR, recorded in rolled-back-from.sha)"

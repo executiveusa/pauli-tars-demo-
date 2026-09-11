@@ -4,7 +4,7 @@
 services:
   bars:
     build: .
-    image: bars-sovereign:local
+    image: ${BARS_IMAGE:-bars-sovereign:local}
     container_name: bars
     restart: unless-stopped
     ports:
