@@ -79,22 +79,62 @@ git -C "$ROOT/origin.git" symbolic-ref HEAD refs/heads/main   # clone checks out
 git clone -q "$ROOT/origin.git" "$BARS_ROOT/app"
 cd "$BARS_ROOT/app"
 
+health_sha() { curl -fsS -m 3 "http://127.0.0.1:$TEST_PORT/health" | grep -o '[0-9a-f]\{40\}'; }
+
 echo "deploy A ($SHA_A)"
-sh deploy/deploy.sh "$SHA_A" >/dev/null
-[ "$(curl -fsS -m 3 http://127.0.0.1:$TEST_PORT/health | grep -o '[0-9a-f]\{40\}')" = "$SHA_A" ]
+sh deploy/deploy.sh "$SHA_A"
+[ "$(health_sha)" = "$SHA_A" ]
 echo "deploy B ($SHA_B)"
-sh deploy/deploy.sh "$SHA_B" >/dev/null
-[ "$(curl -fsS -m 3 http://127.0.0.1:$TEST_PORT/health | grep -o '[0-9a-f]\{40\}')" = "$SHA_B" ]
+sh deploy/deploy.sh "$SHA_B"
+[ "$(health_sha)" = "$SHA_B" ]
 docker image inspect "$IMG:$SHA_A" >/dev/null   # immutable images both exist
 docker image inspect "$IMG:$SHA_B" >/dev/null
+if [ "$(id -u)" != "0" ]; then
+  echo "non-root host: snapshot fallback must have been used"
+  sh deploy/deploy.sh "$SHA_B" 2>&1 | grep -q "snapshotting via" && echo "snapshot fallback: confirmed" || {
+    echo "FATAL: snapshot fallback did not trigger on non-root host" >&2; exit 1; }
+fi
 
 echo "rollback -> A"
-sh deploy/rollback.sh >/dev/null
+sh deploy/rollback.sh
 [ "$(cat $BARS_ROOT/current.sha)" = "$SHA_A" ]
-[ "$(curl -fsS -m 3 http://127.0.0.1:$TEST_PORT/health | grep -o '[0-9a-f]\{40\}')" = "$SHA_A" ]
+[ "$(health_sha)" = "$SHA_A" ]
 echo "rollback -> B"
-sh deploy/rollback.sh >/dev/null
+sh deploy/rollback.sh
 [ "$(cat $BARS_ROOT/current.sha)" = "$SHA_B" ]
-[ "$(curl -fsS -m 3 http://127.0.0.1:$TEST_PORT/health | grep -o '[0-9a-f]\{40\}')" = "$SHA_B" ]
+[ "$(health_sha)" = "$SHA_B" ]
+
+# --- failed-health rollback: bookkeeping and tag untouched ------------------
+echo "failed-health rollback: broken env must leave bookkeeping untouched"
+echo "# broken" > "$ROOT/test.env"
+set +e
+sh deploy/rollback.sh
+RC=$?
+set -e
+[ "$RC" != "0" ]
+[ "$(cat $BARS_ROOT/current.sha)" = "$SHA_B" ]
+[ "$(cat $BARS_ROOT/previous.sha)" = "$SHA_A" ]
+[ ! -f $BARS_ROOT/rolled-back-from.sha ]
+echo "BARS_OPERATOR_TOKEN=integration-test-token" > "$ROOT/test.env"
+echo "failed-health behavior OK (rc=$RC, current=B previous=A, no rolled-back-from)"
+
+# --- --with-data rollback: atomic data restore linked to the deployment -----
+echo "with-data: marker v2 written post-deploy-B, rollback --with-data -> A restores A snapshot (empty)"
+docker exec --user 0 "$CONTAINER" sh -c "echo v2 > /data/marker.txt"
+sh deploy/rollback.sh --with-data
+[ "$(cat $BARS_ROOT/current.sha)" = "$SHA_A" ]
+[ "$(health_sha)" = "$SHA_A" ]
+[ "$(cat $BARS_ROOT/rolled-back-from.sha)" = "$SHA_B" ]
+if docker exec --user 0 "$CONTAINER" sh -c "test -f /data/marker.txt" 2>/dev/null; then
+  echo "FATAL: marker survived --with-data rollback to A (data not restored)" >&2; exit 1
+fi
+echo "with-data -> A OK (marker gone, bookkeeping swapped)"
+sh deploy/rollback.sh --with-data
+[ "$(cat $BARS_ROOT/current.sha)" = "$SHA_B" ]
+# B's deployment-linked snapshot predates the marker too: data is empty again
+if docker exec --user 0 "$CONTAINER" sh -c "test -f /data/marker.txt" 2>/dev/null; then
+  echo "FATAL: marker present after --with-data rollback to B (wrong snapshot)" >&2; exit 1
+fi
+echo "with-data -> B OK (restored exactly the B-linked snapshot)"
 
 echo "DOCKER INTEGRATION: deploy/rollback image identity OK ($SHA_A <-> $SHA_B, port $TEST_PORT, project $PROJECT)"

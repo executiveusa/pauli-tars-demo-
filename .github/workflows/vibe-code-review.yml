@@ -12,7 +12,7 @@ permissions:
 jobs:
   review:
     if: github.event.pull_request.draft == false
-    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@ca8d7a87f30b556a3f898e59d6993f076852a188
+    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
     secrets:

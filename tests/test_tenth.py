@@ -108,8 +108,8 @@ srv.terminate(); srv.wait(5); mock.terminate()
 # adv-v9-2: OCR supply-chain pin is two levels deep and documented honestly
 wf = open(os.path.join(ROOT, ".github/workflows/vibe-code-review.yml")).read()
 doc = open(os.path.join(ROOT, "docs/SOFTWARE_FACTORY_GATE.md")).read()
-CALLER = "ca8d7a87f30b556a3f898e59d6993f076852a188"
-ACTION = "079c7c28b2e10e47ff1ddd8df8f5138ea2efff79"
+CALLER = "864933213372cc488b3f2f2b1deaab84ea91b855"
+ACTION = "2d685ab0d057aec8255f18cd0a5f5a14fbfd5195"
 import re as _re
 _uses = _re.findall(r"uses:\s*executiveusa/open-code-review[^\s]*", wf)
 _ocrver = _re.search(r'ocr_version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', wf)
@@ -205,6 +205,34 @@ H = dict(TOK); H["X-BARS-Confirmation"] = cj["id"]
 s, h, b = req2("POST", "/brief", {"brief": "squad: research presplit race P", "plan": True}, H)
 check("adv-v9-5b same-principal mint+consume still succeeds", s == 200 and b.get("plan"), f"{s} {str(b)[:80]}")
 srv2.terminate(); srv2.wait(5); mock2.terminate()
+
+# adv-v9-6: the candidate never controls its judge + every BARS workflow ref pinned
+import re as _re2
+check("adv-v9-6a candidate rule.json is absent (trusted policy is centrally pinned)",
+      not os.path.exists(os.path.join(ROOT, ".opencodereview", "rule.json"))
+      and "centrally pinned policy" in doc, "")
+_all_sha = True
+_refs = []
+for wfname in ("vibe-code-review.yml", "docker-integration.yml", "bars-check.yml"):
+    txt = open(os.path.join(ROOT, ".github", "workflows", wfname)).read()
+    for u in _re2.findall(r"uses:\s*([^\s#]+)", txt):
+        _refs.append((wfname, u))
+        if "@" not in u or not _re2.search(r"@[0-9a-f]{40}$", u):
+            _all_sha = False
+check("adv-v9-6b every uses: ref in all BARS workflows is a full 40-hex SHA pin",
+      _all_sha and len(_refs) >= 4, str(_refs))
+
+# adv-v9-7: evidence byte binding is published in run output + check summary
+di = open(os.path.join(ROOT, ".github", "workflows", "docker-integration.yml")).read()
+check("adv-v9-7 evidence hashes published in run log and step summary",
+      "sha256sum docker-integration.log run-context.txt" in di
+      and "GITHUB_STEP_SUMMARY" in di and "evidence-hashes.txt" in di, "")
+
+# adv-v9-8: docker integration covers failed-health bookkeeping + with-data + fallback
+td = open(os.path.join(ROOT, "tests", "test_deploy_docker.sh")).read()
+check("adv-v9-8 docker test covers failed-health, --with-data cycle, snapshot fallback",
+      "failed-health rollback" in td and "--with-data" in td
+      and "snapshotting via" in td and "rolled-back-from.sha" in td, "")
 
 print(f"{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)

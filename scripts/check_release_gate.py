@@ -10,7 +10,7 @@ fail = []
 wf = (ROOT / ".github" / "workflows" / "vibe-code-review.yml")
 if not wf.exists():
     fail.append("missing .github/workflows/vibe-code-review.yml")
-elif "executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@ca8d7a87f30b556a3f898e59d6993f076852a188" not in wf.read_text():
+elif "executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855" not in wf.read_text():
     fail.append("workflow does not call the central reusable OCR workflow")
 
 agents = (ROOT / "AGENTS.md").read_text()
@@ -21,15 +21,14 @@ for d in (".agents", ".claude", ".codex", ".cursor"):
     if not (ROOT / d / "skills" / "vibe-project-review" / "SKILL.md").exists():
         fail.append(f"missing skill in {d}")
 
-try:
-    policy = json.loads((ROOT / ".opencodereview" / "rule.json").read_text())
-    if not policy.get("rules"):
-        fail.append("rule.json has no rules")
-except Exception as e:
-    fail.append(f"rule.json unreadable: {e}")
+if (ROOT / ".opencodereview" / "rule.json").exists():
+    fail.append("candidate .opencodereview/rule.json present: the candidate must "
+                "not control its own judge - policy comes from the centrally pinned action")
 
-if not (ROOT / "docs" / "SOFTWARE_FACTORY_GATE.md").exists():
-    fail.append("missing docs/SOFTWARE_FACTORY_GATE.md")
+doc = ROOT / "docs" / "SOFTWARE_FACTORY_GATE.md"
+if not doc.exists() or "centrally pinned policy" not in doc.read_text():
+    fail.append("gate doc must name the centrally pinned policy source")
+
 
 if fail:
     print("RELEASE GATE WIRING: FAIL"); [print(" -", f) for f in fail]; sys.exit(1)

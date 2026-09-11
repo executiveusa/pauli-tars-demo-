@@ -30,6 +30,16 @@ jobs:
       - name: Record run end
         if: always()
         run: echo "RUN_END_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a run-context.txt
+      - name: Publish evidence hashes (independent byte binding)
+        if: always()
+        run: |
+          # anyone with repo access can read this public run log and hash the
+          # committed evidence files against these exact values
+          sha256sum docker-integration.log run-context.txt | tee evidence-hashes.txt
+          echo "### Evidence hashes (code $GITHUB_SHA)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat evidence-hashes.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload evidence (pinned)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
@@ -38,3 +48,4 @@ jobs:
           path: |
             docker-integration.log
             run-context.txt
+            evidence-hashes.txt

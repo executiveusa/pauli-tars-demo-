@@ -36,12 +36,30 @@ if [ "${1:-}" = "--with-data" ]; then
   [ -n "$PREV_SNAP" ] && [ -f "$PREV_SNAP" ] || { echo "[rollback] FATAL: no deployment-linked snapshot for $PREV_SHA"; exit 1; }
   echo "[rollback] stopping service before atomic data replace"
   docker compose -p "$PROJECT" -f "$APP/docker-compose.yml" stop 2>/dev/null || true
-  TMPD=$(mktemp -d $ROOT/.data-restore-XXXXXX)
-  tar -xzf "$PREV_SNAP" -C "$TMPD"
-  OLD=$(mktemp -du $ROOT/.data-old-XXXXXX)
-  mv "$DATA" "$OLD"
-  mv "$TMPD" "$DATA"
-  echo "[rollback] data replaced atomically from $PREV_SNAP (old data at $OLD)"
+  if [ "$(id -u)" = "0" ]; then
+    TMPD=$(mktemp -d $ROOT/.data-restore-XXXXXX)
+    tar -xzf "$PREV_SNAP" -C "$TMPD"
+    OLD=$(mktemp -du $ROOT/.data-old-XXXXXX)
+    mv "$DATA" "$OLD"
+    mv "$TMPD" "$DATA"
+    echo "[rollback] data replaced atomically from $PREV_SNAP (old data at $OLD)"
+  else
+    # non-root docker host (CI runners): the container-written state is
+    # uid-10001/0600 and the restored files must keep that ownership, so the
+    # extract+swap runs as root inside the immutable previous image.
+    [ "$DATA" = "$ROOT/data" ] || {
+      echo "[rollback] FATAL: non-root host supports only BARS_DATA=\$BARS_ROOT/data" >&2; exit 2; }
+    SNAPIN="/baroot/${PREV_SNAP#$ROOT/}"
+    docker run --rm --user 0 -e SNAP="$SNAPIN" -v "$ROOT":/baroot "$IMG:$PREV_SHA" sh -c '
+      set -e
+      T=$(mktemp -d /baroot/.data-restore-XXXXXX)
+      tar -xzf "$SNAP" -C "$T"
+      O=$(mktemp -du /baroot/.data-old-XXXXXX)
+      mv /baroot/data "$O"
+      mv "$T" /baroot/data
+      echo "[rollback] data replaced atomically from $SNAP (old data at $O, via docker)"
+    '
+  fi
 else
   echo "[rollback] image-only: post-deploy data/receipts/audit preserved"
 fi

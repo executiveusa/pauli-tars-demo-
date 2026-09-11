@@ -69,6 +69,13 @@ is in the PR body.
 /opt/bars/app/deploy/rollback.sh --with-data # also restore pre-deploy data snapshot
 ```
 
+DISPOSITION (deploy bookkeeping): deploy records the new tag/bookkeeping BEFORE the
+health gate; a failed deploy therefore leaves current.sha and the current tag on the
+unverified image BY DESIGN - previous.sha/previous.snapshot are already in place, so
+deploy/rollback.sh is the transaction that restores the exact prior state
+(image + bookkeeping), and it is health-gated itself. This is a recorded
+disposition, not an oversight.
+
 A FAILED rollback leaves the attempted previous image RUNNING for operator
 investigation and rewrites NO bookkeeping (current.sha/previous.sha/snapshot
 links stay as they were, and the `current` tag is restored to the abandoned
