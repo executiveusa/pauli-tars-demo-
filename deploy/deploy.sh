@@ -9,7 +9,7 @@ case "$SHA" in
   ????????????????????????????????????????) ;;
   *) echo "[deploy] FATAL: need a full 40-char SHA" >&2; exit 2;;
 esac
-echo "$SHA" | grep -qiE '^[0-9a-f]{40}$' || { echo "[deploy] FATAL: SHA must be 40 lowercase hex" >&2; exit 2; }
+echo "$SHA" | grep -qE '^[0-9a-f]{40}$' || { echo "[deploy] FATAL: git SHA must be exactly 40 lowercase hex characters, got '$SHA'" >&2; exit 2; }
 ROOT=${BARS_ROOT:-/opt/bars}
 APP=$ROOT/app
 DATA=$ROOT/data

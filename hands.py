@@ -525,7 +525,14 @@ def handle(handler, method, raw_path, payload):
         if not task:
             handler._json({"error": "unknown confirm_id - request the task first"}, 400)
             return True
-        if not handler._need_confirmation("hands.exec", p, recipient="/hands_go"):
+        # canonical object: the client body must restate the pending task
+        # exactly, and the confirmation binds that exact canonical object
+        canonical = {"confirm_id": cid, "task": task}
+        if p != canonical:
+            PENDING[cid] = task
+            handler._json({"error": "task mismatch - body must restate the pending task"}, 400)
+            return True
+        if not handler._need_confirmation("hands.exec", canonical, recipient="/hands_go"):
             PENDING[cid] = task     # put it back; approval can still happen
             return True
         if RUN["active"]:

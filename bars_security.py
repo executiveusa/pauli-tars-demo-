@@ -375,6 +375,16 @@ class ReceiptLedger:
             with self._lock:
                 lfd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
                 fcntl.flock(lfd, fcntl.LOCK_EX)   # cross-process writers
+                # runtime fail-closed: anchor or state vanished while a
+                # non-empty ledger exists -> integrity failure, refuse append
+                if (os.path.exists(self.path) and os.path.getsize(self.path) > 0
+                        and (not os.path.exists(self._anchor_path)
+                             or not os.path.exists(self._state_path))):
+                    self._broken = True
+                    self.write_failures += 1
+                    self.last_error = "receipt anchor/state disappeared at runtime (fail-closed)"
+                    os.close(lfd)
+                    return
                 # reload chain state UNDER the lock: a second process may have
                 # appended since this one initialized
                 st = self._load_state()

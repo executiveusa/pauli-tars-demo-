@@ -98,17 +98,22 @@ subprocess.run(["pkill", "-f", "adv_mock.py"], capture_output=True)
 DATA = "/tmp/adv-data"; shutil.rmtree(DATA, ignore_errors=True); os.makedirs(DATA)
 mocksrc = open(os.path.join(ROOT, "tests", "mock_provider.py")).read()
 mockpatch = (
-    'if "MOCKFAIL" in user:\n'
+    '        if "MOCKFAIL" in user:\n'
     '            self.send_response(500); self.end_headers(); return\n'
-    '        if "ONLY a JSON array" in user or user.strip() == "research x":\n'
+    '        if user.startswith("MOCKSAY "):\n'
+    '            txt = user[len("MOCKSAY "):]\n'
+    '        elif "ONLY a JSON array" in user or user.strip() == "research x":\n'
     '            txt = "[\\"research alpha\\", \\"research beta\\"]"\n'
     '        else:\n'
     '            txt = f"MOCK-REPLY[{model}]: " + user[:60]'
 )
 
-mocksrc = mocksrc.replace(
-    'txt = f"MOCK-REPLY[{model}]: " + user[:60]',
-    mockpatch)
+anchor = ('        if user.startswith("MOCKSAY "):\n'
+          '            txt = user[len("MOCKSAY "):]          # verbatim: marker-injection tests\n'
+          '        else:\n'
+          '            txt = f"MOCK-REPLY[{model}]: " + user[:60]')
+assert anchor in mocksrc, "mock anchor drifted - update this patch"
+mocksrc = mocksrc.replace(anchor, mockpatch)
 open("/tmp/adv_mock.py", "w").write(mocksrc)
 mock = subprocess.Popen([sys.executable, "/tmp/adv_mock.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 env = dict(os.environ, BARS_DATA_DIR=DATA, BARS_OPERATOR_TOKEN="advtok",
@@ -177,15 +182,17 @@ shutil.copy(os.path.join(ROOT, "docker-compose.yml"), SB + "/root/app/docker-com
 stub = '''#!/bin/bash
 echo "$(basename $0) $@" >> ''' + SB + '''/calls.log
 if [ "$(basename $0)" = "docker" ] && [ "$1" = "image" ]; then exit 0; fi
-if [ "$(basename $0)" = "git" ] && [ "$1" = "rev-parse" ]; then echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; exit 0; fi
-if [ "$(basename $0)" = "curl" ]; then echo "{\"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0; fi
+if [ "$(basename $0)" = "git" ] && [ "$1" = "rev-parse" ]; then echo "$BARS_FAKE_HEAD"; exit 0; fi
+if [ "$(basename $0)" = "curl" ]; then echo '{"sha": "'$(cat $BARS_ROOT/current.sha 2>/dev/null)'"}'; exit 0; fi
 exit 0
 '''
 for t in ("docker", "curl", "git", "tar"):
     open(SB + "/bin/" + t, "w").write(stub)
     os.chmod(SB + "/bin/" + t, 0o755)
-env = dict(os.environ, PATH=SB + "/bin:/usr/bin:/bin", BARS_ROOT=SB + "/root")
+env = dict(os.environ, PATH=SB + "/bin:/usr/bin:/bin", BARS_ROOT=SB + "/root",
+           BARS_FAKE_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 p = subprocess.run(["sh", SB + "/root/app/deploy.sh", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], env=env, capture_output=True, text=True)
+assert p.returncode == 0, "deploy A failed: " + p.stdout + p.stderr
 calls = open(SB + "/calls.log").read()
 check("adv-v2-DR1 deploy builds exact sha image", "docker build" in calls and "bars-sovereign:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in calls)
 check("adv-v2-DR2 deploy records current sha", open(SB + "/root/current.sha").read().strip() == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -194,8 +201,15 @@ os.remove(SB + "/calls.log")
 p = subprocess.run(["sh", SB + "/root/app/rollback.sh"], env=env, capture_output=True, text=True)
 calls = open(SB + "/calls.log").read()
 check("adv-v2-DR4 default rollback does NOT touch data", "tar -x" not in calls and open(SB + "/root/data/marker.txt").read() == "live-data")
-check("adv-v2-DR5 rollback records abandoned sha", open(SB + "/root/rolled-back-from.sha").read().strip() == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-check("adv-v2-DR6 rollback swaps image via compose", "compose" in calls and "bars-sovereign:rollback" in calls)
+check("adv-v2-DR5 rollback refuses cleanly with no previous deployment", p.returncode != 0 and "no previous deployment SHA" in (p.stdout + p.stderr), f"rc={p.returncode} {p.stdout[-80:]}")
+env2 = dict(env, BARS_FAKE_HEAD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+p = subprocess.run(["sh", SB + "/root/app/deploy.sh", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], env=env2, capture_output=True, text=True)
+assert p.returncode == 0, "deploy B failed: " + p.stdout + p.stderr
+os.remove(SB + "/calls.log")
+p = subprocess.run(["sh", SB + "/root/app/rollback.sh"], env=env, capture_output=True, text=True)
+calls = open(SB + "/calls.log").read()
+check("adv-v2-DR6 rollback swaps image via compose", p.returncode == 0 and "compose" in calls and "bars-sovereign:rollback" in calls, f"rc={p.returncode}")
+check("adv-v2-DR7 rollback relinks current/previous", open(SB + "/root/current.sha").read().strip() == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and open(SB + "/root/previous.sha").read().strip() == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
 print(f"\n== {len(passed)} passed, {len(failed)} failed ==")
 if failed: print("FAILED:", failed); sys.exit(1)

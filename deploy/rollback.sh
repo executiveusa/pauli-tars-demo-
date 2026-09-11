@@ -30,19 +30,26 @@ else
 fi
 
 CUR=$(cat $ROOT/current.sha 2>/dev/null || echo unknown)
-echo "$CUR" > $ROOT/rolled-back-from.sha
-[ -f $ROOT/current.snapshot ] && cp $ROOT/current.snapshot $ROOT/rolled-back-from.snapshot || true
-echo "[rollback] rolling back from $CUR to ${PREV_SHA:-previous image}"
+case "$PREV_SHA" in
+  ""|unknown) echo "[rollback] FATAL: no previous deployment SHA recorded"; exit 1;;
+esac
+echo "$PREV_SHA" | grep -qiE '^[0-9a-f]{40}$' || { echo "[rollback] FATAL: previous.sha must be exactly 40 lowercase hex chars, got '$PREV_SHA'"; exit 2; }
+echo "[rollback] rolling back from $CUR to $PREV_SHA"
 
 docker tag bars-sovereign:rollback bars-sovereign:current
-[ -n "$PREV_SHA" ] && echo "$PREV_SHA" > $ROOT/current.sha
-export BARS_GIT_SHA="${PREV_SHA:-unknown}"
+# relink for REPEATED rollback: current <- previous, previous <- rolled-back-from
+[ -f $ROOT/current.sha ] && cp $ROOT/current.sha $ROOT/previous.sha || true
+[ -f $ROOT/current.snapshot ] && cp $ROOT/current.snapshot $ROOT/previous.snapshot || true
+echo "$PREV_SHA" > $ROOT/current.sha
+export BARS_GIT_SHA="$PREV_SHA"
 
 BARS_IMAGE=bars-sovereign:rollback docker compose -f "$APP/docker-compose.yml" up -d --force-recreate
 
 i=0
-until curl -fsS -m 3 http://127.0.0.1:4321/health >/dev/null 2>&1; do
-  i=$((i+1)); [ $i -gt 20 ] && { echo "[rollback] FAILED health"; exit 1; }
+while :; do
+  GOT=$(curl -fsS -m 3 http://127.0.0.1:4321/health 2>/dev/null | grep -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
+  [ "$GOT" = "$PREV_SHA" ] && break
+  i=$((i+1)); [ $i -gt 20 ] && { echo "[rollback] FAILED: /health reports '${GOT:-none}', expected $PREV_SHA"; exit 1; }
   sleep 2
 done
-echo "[rollback] OK: previous image healthy (rolled back from $CUR)"
+echo "[rollback] OK: $PREV_SHA healthy and /health verifies (rolled back from $CUR)"

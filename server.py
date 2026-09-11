@@ -716,11 +716,13 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         if not routed_model:
             LAST_USAGE["lane"] = "static"
             LAST_USAGE["routing"] = "static-config"
+        served_host = base or "https://openrouter.ai/api/v1"
         _receipt({"kind": "chat", "lane": LAST_USAGE.get("lane"),
                   "routing": LAST_USAGE.get("routing"), "model": str(model),
                   "tokens_in": _u.get("prompt_tokens", 0),
                   "tokens_out": _u.get("completion_tokens", 0),
-                  "ms": int((time.time() - t0) * 1000), "paid": paid})
+                  "ms": int((time.time() - t0) * 1000),
+                  "paid": _paid_route(served_host)})
         if sb:
             try:
                 u = sb.record_llm(agent="bars", model=str(model), response_json=data, task_id="bars-chat")
@@ -793,7 +795,7 @@ def anthropic_vision(system, media_type, b64, question, max_tokens=350):
     return anthropic_chat(system, msgs, max_tokens)
 
 # pending outward action (trust dial v2) — ONE at a time, executed only on "do it"
-PENDING = {"action": None}
+ACTIONS = {}          # id -> immutable {"instruction", "t"} pending act objects
 
 # ------------------------------------------------- desktop presence (the 3D BARS)
 # same pattern as Jarvis's orb: presence.py is a DIRECT child (GUI session →
@@ -1826,7 +1828,9 @@ def run_mission(mid):
         timed_out = not watchdog.is_alive() and not report.strip()
         watchdog.cancel()
         RUNNING.pop(mid, None)
-        if m["status"] == "ABORTED":
+        if m.get("_abort") or m["status"] in ("ABORTING", "ABORTED"):
+            m.update(status="ABORTED", t_end=time.time(),
+                     debrief="Job aborted on your order.")
             _release_mission_lock(mid)
             persist_missions(); return
         if timed_out:
@@ -2005,12 +2009,19 @@ class Handler(BaseHTTPRequestHandler):
     LOGIN_FAILS = {}
     LOGIN_LOCK = threading.Lock()
 
+    def _prune_throttle(self, now):
+        """Bounded state: drop failure records idle for >15 min."""
+        if len(self.LOGIN_FAILS) > 64:
+            for k in [k for k, r in self.LOGIN_FAILS.items() if now - r["t"] > 900]:
+                self.LOGIN_FAILS.pop(k, None)
+
     def _throttle_auth_fail(self):
         """Bearer/session failures: per-IP backoff, hard lockout past 8. Returns
         True when the request must be answered 429."""
         ip = self._client_ip()
         now = time.time()
         with self.LOGIN_LOCK:
+            self._prune_throttle(now)
             rec = self.LOGIN_FAILS.setdefault(ip, {"n": 0, "t": 0.0})
             if now - rec["t"] > 900:
                 rec["n"] = 0
@@ -2023,19 +2034,28 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(min(0.5 * (2 ** min(n - 3, 4)), 8))
         return False
 
+    TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
+
     def _client_ip(self):
-        # trust XFF only when the immediate peer is the loopback reverse proxy
-        peer = self.client_address[0] if self.client_address else ""
-        if peer in ("127.0.0.1", "::1"):
-            xff = self.headers.get("X-Forwarded-For", "")
-            if xff:
-                return xff.split(",")[0].strip()[:64]
-        return peer or "?"
+        """Caddy appends the real client to XFF; inbound XFF from the client is
+        untrusted. Walk the chain right-to-left past trusted proxies; the first
+        untrusted hop is the client. XFF is only consulted when the immediate
+        peer is itself a trusted (loopback) proxy."""
+        peer = (self.client_address[0] if self.client_address else "") or "?"
+        if peer not in self.TRUSTED_PROXIES:
+            return peer
+        chain = [h.strip()[:64] for h in self.headers.get("X-Forwarded-For", "").split(",")
+                 if h.strip()]
+        for hop in reversed(chain):
+            if hop not in self.TRUSTED_PROXIES:
+                return hop
+        return peer
 
     def _login(self):
         ip = self._client_ip()
         now = time.time()
         with self.LOGIN_LOCK:
+            self._prune_throttle(now)
             rec = self.LOGIN_FAILS.get(ip, {"n": 0, "t": 0.0})
             # prune stale entries so the map cannot grow unbounded
             if now - rec["t"] > 900:
@@ -2273,7 +2293,7 @@ class Handler(BaseHTTPRequestHandler):
                         "realtime": bool(CONFIG["openai_key"]),
                         "realtime_voice": CONFIG["realtime_voice"],
                         "takeover_speed": HANDS.SPEED if HANDS else None,
-                        "pending": bool(PENDING.get("action")),
+                        "pending": bool(ACTIONS),
                         "usage": dict(LAST_USAGE),
                         "spend": spend})
         else:
@@ -2396,21 +2416,20 @@ class Handler(BaseHTTPRequestHandler):
                 elif tl and tl.group(2).lower() in TOOL_CATALOG:
                     tid = tl.group(2).lower()
                     reply = reply[:tl.start()].strip()
-                    installed = tools_installed()
+                    # never mutate from chat: propose the exact change; the human
+                    # approves via a separate tools.write confirmation on /tools
                     if tl.group(1).upper() == "REMOVE":
-                        installed.pop(tid, None); tools_save(installed)
-                        tool = {"op": "removed", "id": tid}
+                        tool = {"proposed": True, "op": "remove", "id": tid}
                     else:
-                        installed.setdefault(tid, {"env": {}}); tools_save(installed)
-                        tool = {"op": "added", "id": tid,
-                                "needs": tool_needs(tid, installed[tid]),
+                        tool = {"proposed": True, "op": "add", "id": tid,
                                 "auth": TOOL_CATALOG[tid]["auth"]}
                 elif act:
                     instr = re.sub(r"\s+", " ", act.group(1)).strip()[:2000]
                     reply = reply[:act.start()].strip()
                     if instr:
-                        PENDING["action"] = {"instruction": instr, "t": time.time()}
-                        pending = {"desc": instr}
+                        aid = os.urandom(4).hex()
+                        ACTIONS[aid] = {"instruction": instr, "t": time.time()}
+                        pending = {"id": aid, "desc": instr}
                 elif dep:
                     brief = re.sub(r"\s+", " ", dep.group(1)).strip()[:4000]
                     reply = reply[:dep.start()].strip()
@@ -2497,9 +2516,12 @@ class Handler(BaseHTTPRequestHandler):
             if tid not in TOOL_CATALOG:
                 self._json({"error": "unknown tool"}, 400); return
             installed = tools_installed()
-            if op == "install":
+            if op in ("install", "remove"):
+                # install and removal share the SAME exact gate, bound to the
+                # exact tool name + config mutation payload
                 if not self._need_confirmation("tools.write", data, recipient="/tools"):
                     return
+            if op == "install":
                 cur = installed.setdefault(tid, {"env": {}})
                 for k, v in (data.get("env") or {}).items():
                     if k in TOOL_CATALOG[tid].get("env_keys", []) and str(v).strip():
@@ -2582,27 +2604,30 @@ class Handler(BaseHTTPRequestHandler):
                     brief = re.sub(r"\s+", " ", dep.group(1)).strip()[:4000]
                     reply = reply[:dep.start()].strip()
                     if brief:
+                        # propose only: a generated mission needs its own
+                        # mission.exec confirmation before anything runs
                         nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", reply)
-                        mid = start_mission(brief, image=img,
-                                            agent=nm.group(1) if nm else None)
-                        deployed = {"id": mid, "brief": brief,
-                                    "agent": MISSIONS[mid]["agent"]}
+                        deployed = {"proposed": True, "brief": brief,
+                                    "agent": nm.group(1) if nm else None}
                 self._json({"reply": speakable(reply), "deployed": deployed})
             except Exception as e:
                 self._json({"error": str(e)[:200]}, 500)
 
         elif path == "/act":
-            if not self._need_confirmation("act.exec", data, recipient="/act"):
+            aid = str(data.get("action_id") or "")
+            act = ACTIONS.get(aid)
+            if not act:
+                self._json({"reply": "Nothing's queued under that id. Give me something "
+                                     "to send first.", "refused": True}, 400); return
+            # confirmation binds the EXACT immutable action object
+            canonical = {"action_id": aid, "instruction": act["instruction"]}
+            if not self._need_confirmation("act.exec", canonical, recipient="/act"):
                 return
             if STATE.get("trust") != "confirm-to-act":
                 self._json({"reply": "Trust is set to draft-safe. Flip it to CONFIRM-TO-ACT "
                                      "in the HUD if you want me actually pulling triggers.",
                             "refused": True}); return
-            act = PENDING.get("action")
-            if not act:
-                self._json({"reply": "Nothing's queued. Give me something to send first.",
-                            "refused": True}); return
-            PENDING["action"] = None
+            ACTIONS.pop(aid, None)               # single-use
             mid = start_mission(act["instruction"], agent="BARS", kind="ACT")
             self._json({"reply": "Copy. Executing now — watch the board.",
                         "id": mid, "instruction": act["instruction"]})
@@ -2637,8 +2662,11 @@ class Handler(BaseHTTPRequestHandler):
                                      "reports stay on disk."})
 
         elif path == "/cancel_act":
-            had = PENDING.get("action") is not None
-            PENDING["action"] = None
+            aid = str(data.get("action_id") or "")
+            if aid:
+                had = ACTIONS.pop(aid, None) is not None
+            else:
+                had = bool(ACTIONS); ACTIONS.clear()
             self._json({"reply": "Scrubbed." if had else "Nothing to cancel.", "ok": True})
 
         elif path == "/hue":

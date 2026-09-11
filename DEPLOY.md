@@ -103,3 +103,13 @@ not, since the key comes from the env). To remove the anchor from the
 writable data domain entirely, set `BARS_RECEIPT_ANCHOR_PATH` in the
 environment (e.g. `/etc/bars/receipt.anchor` on a read-only-mounted file) so
 the anchor file is stored outside `/data`. The HMAC check runs either way.
+
+### Full-wipe trust limitation
+
+The fail-closed checks cover anchor forgery, a missing/corrupt anchor or
+state file, and runtime disappearance of either. They cannot cover an
+attacker who wipes the ENTIRE data volume (ledger + state + anchor together):
+a fresh empty ledger is indistinguishable from a fresh install. Mitigation is
+operational: ship `receipts.jsonl` off-box (or snapshot `/opt/bars/data` and
+`/opt/bars/anchor` independently) if receipt continuity must survive a full
+data-volume compromise.

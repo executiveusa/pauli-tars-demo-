@@ -18,6 +18,8 @@ jobs:
           python-version: '3.12'
       - name: Identity regression
         run: python scripts/check_bars_identity.py
+      - name: Security + adversarial ledger (all suites)
+        run: bash tests/run_all.sh
       - name: Runtime syntax
         run: python -m py_compile server.py bars_router.py hue.py hands.py presence.py terabithia_adapter.py remote_bridge.py scripts/test_remote_bridge.py
       - name: Remote mission contract proof

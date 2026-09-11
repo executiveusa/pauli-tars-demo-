@@ -19,8 +19,17 @@ class H(BaseHTTPRequestHandler):
         user = ""
         for m in data.get("messages", []):
             if m.get("role") == "user":
-                c = m.get("content"); user = c if isinstance(c, str) else str(c)
-        txt = f"MOCK-REPLY[{model}]: " + user[:60]
+                c = m.get("content")
+                if isinstance(c, str):
+                    user = c
+                elif isinstance(c, list):
+                    user = " ".join(t for t in (b.get("text", "") for b in c if isinstance(b, dict)) if t).strip()
+                else:
+                    user = str(c)
+        if user.startswith("MOCKSAY "):
+            txt = user[len("MOCKSAY "):]          # verbatim: marker-injection tests
+        else:
+            txt = f"MOCK-REPLY[{model}]: " + user[:60]
         body = json.dumps({"choices":[{"message":{"role":"assistant","content":txt}}],
                            "usage":{"prompt_tokens":11,"completion_tokens":7}}).encode()
         self.send_response(200); self.send_header("Content-Type","application/json")

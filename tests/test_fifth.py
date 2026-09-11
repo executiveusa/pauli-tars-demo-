@@ -93,6 +93,7 @@ check("adv-v4-5e NO request ever constructed to openrouter",
 class FakeH:
     client_address = ("8.8.8.8", 1)
     headers = {"X-Forwarded-For": "203.0.113.9"}
+    TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
 check("adv-v4-6 non-loopback peer cannot spoof XFF",
       server.Handler._client_ip(FakeH()) == "8.8.8.8")
 FakeH.client_address = ("127.0.0.1", 1)
