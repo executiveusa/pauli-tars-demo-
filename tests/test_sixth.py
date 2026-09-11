@@ -181,6 +181,11 @@ check("adv-v5-9a rollback verifies + relinks (current=A, previous=B)",
       p.returncode == 0 and open(SB + "/root/current.sha").read().strip() == A
       and open(SB + "/root/previous.sha").read().strip() == Bv,
       f"rc={p.returncode} cur={open(SB + '/root/current.sha').read().strip()[:8]} err={p.stderr[-120:]}")
+check("adv-v5-9c state tracked: rolled-back-from + snapshot links swap",
+      open(SB + "/root/rolled-back-from.sha").read().strip() == Bv
+      and open(SB + "/root/current.snapshot").read().strip().endswith(f"data-{A}.tar.gz")
+      and open(SB + "/root/previous.snapshot").read().strip().endswith(f"data-{Bv}.tar.gz"),
+      open(SB + "/root/rolled-back-from.sha").read().strip()[:8])
 p = run("rollback.sh", None, "")
 check("adv-v5-9b repeated rollback swaps back (current=B, previous=A)",
       p.returncode == 0 and open(SB + "/root/current.sha").read().strip() == Bv

@@ -84,7 +84,20 @@ try:
         os.environ.get("BARS_ALLOWED_ORIGINS", ""), ALLOW_LOCAL_DEV)
 except sec.SecurityConfigError as e:
     raise SystemExit(f"[bars] FATAL security config: {e}")
-GIT_SHA = os.environ.get("BARS_GIT_SHA", "")
+def _read_sha():
+    # image-baked provenance wins: /health must report the SHA the code was
+    # built from, not a circular runtime env echo
+    try:
+        with open(os.environ.get("BARS_SHA_FILE") or os.path.join(ROOT, ".bars_sha")) as f:
+            v = f.read().strip()
+            if re.fullmatch(r"[0-9a-f]{40}", v):
+                return v
+    except Exception:
+        pass
+    return os.environ.get("BARS_GIT_SHA", "")
+GIT_SHA = _read_sha()
+PAID_MODE = os.environ.get("BARS_ALLOW_PAID", "").strip() == "1"
+_COST_CAP = threading.local()   # per-request enforced cap from the shown bound
 MISSION_TIMEOUT = 900  # seconds
 SQUAD_NAMES = ["CASE", "KIPP", "PLEX", "N1X", "V0X"]
 # the model bench (conversational brain: chat / debrief / vision / duplex)
@@ -493,7 +506,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var c=el('div',null,'background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:520px;border-radius:8px;max-height:80vh;overflow:auto');"
     b"c.appendChild(el('b','BARS - HUMAN APPROVAL REQUIRED','color:#f59e0b'));"
     b"var tb=el('table',null,'font-size:12px;line-height:1.6;margin-top:12px');"
-    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Cost bound','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']."
+    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Worst-case cost (estimate, enforced cap)','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']."
     b"forEach(function(r){var tr=el('tr');var k=el('td',r[0],null);k.style.fontWeight='bold';k.style.textAlign='right';k.style.paddingRight='8px';"
     b"tr.appendChild(k);tr.appendChild(el('td',r[1]||''));tb.appendChild(tr)});c.appendChild(tb);"
     b"c.appendChild(el('div','Exact payload:','font-weight:bold;margin-top:10px'));"
@@ -531,7 +544,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"return mintAndRun(j.need_confirmation.action,payloadObj,p,{u:url,m:m,h:h,b:o.body})"
     b".then(function(r2){resolve(r2||r)})})})}"
     b"return r})}"
-    b"if(r.ok&&same&&p==='/chat'){return r.clone().json().then(function(j){"
+    b"if(r.ok&&same&&(p==='/chat'||p==='/see')){return r.clone().json().then(function(j){"
     # generated mission: separate displayed confirmation, full payload shown
     b"if(j&&j.deployed&&j.deployed.proposed){return new Promise(function(resolve){"
     b"approve({action:'mission.exec',policy:'run a mission (spends model tokens)',recipient:'/brief',cost_bound:8192,ttl_seconds:120},"
@@ -570,6 +583,9 @@ def _spend_bridge():
 
 
 def anthropic_chat(system, messages, max_tokens=600, user_message=None):
+    _cap = getattr(_COST_CAP, "value", None)
+    if _cap:
+        max_tokens = min(max_tokens, int(_cap))   # never exceed the shown bound
     # BARS AUTO-ROUTER: if user_message provided, route to optimal model
     routed_model = None
     routed_base = None
@@ -940,7 +956,7 @@ def realtime_instructions():
           "first, specifics over politeness; a 'roast this' deserves named, concrete critiques "
           "(which section, which words, where a first-time visitor's eye dies). After a "
           "critical take, OFFER — once, one dry sentence — to deploy a robot to research how "
-          "the best ones do it; call deploy_mission only after he says yes. When a system "
+          "the best ones do it; only ever PROPOSE a mission - the system collects his explicit approval separately, never treat a chat message as approval. When a system "
           "note says a background job just "
           "finished, tell him the debrief immediately, in character. Otherwise just talk. "
           "Never read out URLs or markdown.")
@@ -1564,7 +1580,7 @@ def tools_block():
     if ready:
         p += ("\n\nCONNECTED TOOLS (real MCP integrations your robots use on jobs): "
               + ", ".join(ready) + ". Research-safe tools run on any job; tools marked "
-              "[do-it gate] only run on a confirmed ACT job after the Commander says 'do it'.")
+              "[do-it gate] only run inside a system-approved ACT job - the system collects approval, never assume it.")
     if waiting:
         p += ("\n\nTOOLS NOT READY YET (installed but NOT usable — never claim these work): "
               + ", ".join(waiting) + ".")
@@ -2092,7 +2108,8 @@ class Handler(BaseHTTPRequestHandler):
     def _need_confirmation(self, action, data, recipient=None):
         cid = self.headers.get("X-BARS-Confirmation", "")
         try:
-            CONFIRMATIONS.consume(cid, action, data, recipient=recipient)
+            obj = CONFIRMATIONS.consume(cid, action, data, recipient=recipient)
+            _COST_CAP.value = obj.get("cost_bound") or 0   # enforce the shown bound
             return True
         except Exception as e:
             ttl, policy, cost = sec.ConfirmationStore.POLICIES.get(action, (0, "", 0))
@@ -2125,12 +2142,14 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json({"ok": False}, 401)
             return
-        if HANDS and path == "/api/hands":
-            HANDS.handle(self, "GET", self.path, None); return
         if path == "/health":
             self._json({"ok": True, "service": "bars", "sha": GIT_SHA or None}); return
         public = path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/",
                           "/agent", "/agent/", "/index.html") or path.startswith("/static/")
+        if HANDS and path == "/api/hands":
+            if not _token_ok(self.headers):
+                self._need_auth(); return
+            HANDS.handle(self, "GET", self.path, None); return
         if not public and not _token_ok(self.headers):
             if path == "/api/status":
                 self._json(_public_status()); return   # sanitized anonymous status
@@ -2346,9 +2365,11 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()[:4000]
             if not text:
                 self._json({"error": "empty"}, 400); return
-            # ordinary chat is conversational inference: no approval. Any
-            # mission/tool/action the reply GENERATES is proposed, not run -
-            # each gets its own displayed confirmation.
+            # ordinary chat is conversational inference: no approval while paid
+            # models are disabled by default. With paid escalation enabled,
+            # conversational inference itself needs a separate approved policy.
+            if PAID_MODE and not self._need_confirmation("chat.exec", data, recipient="/chat"):
+                return
             history = data.get("history") or []
             msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
                     for h in history[-8:] if h.get("role") in ("user", "assistant")]
@@ -2563,7 +2584,10 @@ class Handler(BaseHTTPRequestHandler):
             mm = re.match(r"^data:(image/(?:png|jpeg|webp));base64,(.+)$", img, re.S)
             if not mm:
                 self._json({"error": "bad image"}, 400); return
-            # screen analysis is conversational inference: no approval needed
+            # screen analysis is conversational inference: ungated only while
+            # paid models are disabled by default
+            if PAID_MODE and not self._need_confirmation("chat.see", data, recipient="/see"):
+                return
             q = (data.get("question") or
                  "This is the Commander's screen right now. Tell him what you see and give your "
                  "blunt take — what's good, what's off, what you'd fix first.")
@@ -2584,7 +2608,7 @@ class Handler(BaseHTTPRequestHandler):
                     "AFTER a critical take, if online research would sharpen the fix list "
                     "(how the best competitors do it, current best practices), OFFER it in "
                     "one dry sentence — e.g. 'Want me to put KIPP on studying how the top "
-                    "communities do this, sir?' — and only use [DEPLOY: …] after he says yes, "
+                    "communities do this, sir?' — and only ever PROPOSE with [DEPLOY: …] - the system asks him separately, so never imply the mission started. "
                     "acking with a NAMED squad member (CASE/KIPP/PLEX/N1X — the name you say "
                     "is who goes). "
                     "If he asks you to research, find, compare, audit, or otherwise DO WORK "

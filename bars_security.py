@@ -304,6 +304,16 @@ class ReceiptLedger:
         os.replace(tmp, self._anchor_path)
 
     def _load_key(self, key_path):
+        # env/Infisical first: the HMAC key never has to touch the data volume
+        env_k = os.environ.get("BARS_RECEIPT_KEY", "").strip()
+        if env_k:
+            try:
+                k = bytes.fromhex(env_k)
+                if len(k) >= 32:
+                    return k
+            except ValueError:
+                pass
+            raise RuntimeError("BARS_RECEIPT_KEY is set but not valid hex of >=32 bytes")
         try:
             with open(key_path, "rb") as f:
                 k = f.read().strip()

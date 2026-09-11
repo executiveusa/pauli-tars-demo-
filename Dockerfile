@@ -13,6 +13,10 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY . /app
 
+# runtime identity comes from image provenance, not a runtime env echo
+ARG BARS_SHA=unknown
+RUN echo "$BARS_SHA" > /app/.bars_sha
+
 RUN useradd --system --uid 10001 --home-dir /data bars \
     && mkdir -p /data \
     && chown -R bars:bars /data

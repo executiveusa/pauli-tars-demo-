@@ -27,7 +27,7 @@ HEAD_NOW=$(git rev-parse HEAD)
 [ "$HEAD_NOW" = "$SHA" ] || { echo "[deploy] FATAL: HEAD $HEAD_NOW != requested $SHA"; exit 1; }
 
 echo "[deploy] build bars-sovereign:$SHA (exact)"
-docker build -q -t "bars-sovereign:$SHA" . >/dev/null
+docker build -q --build-arg BARS_SHA="$SHA" -t "bars-sovereign:$SHA" . >/dev/null
 
 echo "[deploy] preserve current deployment for rollback"
 if docker image inspect bars-sovereign:current >/dev/null 2>&1; then

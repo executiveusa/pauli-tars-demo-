@@ -199,7 +199,7 @@ check("adv-v2-DR2 deploy records current sha", open(SB + "/root/current.sha").re
 check("adv-v2-DR3 deploy preserves previous sha", os.path.exists(SB + "/root/previous.sha") or True)  # first deploy: none
 os.remove(SB + "/calls.log")
 p = subprocess.run(["sh", SB + "/root/app/rollback.sh"], env=env, capture_output=True, text=True)
-calls = open(SB + "/calls.log").read()
+calls = open(SB + "/calls.log").read() if os.path.exists(SB + "/calls.log") else ""
 check("adv-v2-DR4 default rollback does NOT touch data", "tar -x" not in calls and open(SB + "/root/data/marker.txt").read() == "live-data")
 check("adv-v2-DR5 rollback refuses cleanly with no previous deployment", p.returncode != 0 and "no previous deployment SHA" in (p.stdout + p.stderr), f"rc={p.returncode} {p.stdout[-80:]}")
 env2 = dict(env, BARS_FAKE_HEAD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
@@ -208,7 +208,7 @@ assert p.returncode == 0, "deploy B failed: " + p.stdout + p.stderr
 os.remove(SB + "/calls.log")
 p = subprocess.run(["sh", SB + "/root/app/rollback.sh"], env=env, capture_output=True, text=True)
 calls = open(SB + "/calls.log").read()
-check("adv-v2-DR6 rollback swaps image via compose", p.returncode == 0 and "compose" in calls and "bars-sovereign:rollback" in calls, f"rc={p.returncode}")
+check("adv-v2-DR6 rollback runs immutable prev image via compose", p.returncode == 0 and "compose" in calls and "bars-sovereign:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in calls, f"rc={p.returncode}")
 check("adv-v2-DR7 rollback relinks current/previous", open(SB + "/root/current.sha").read().strip() == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and open(SB + "/root/previous.sha").read().strip() == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
 print(f"\n== {len(passed)} passed, {len(failed)} failed ==")

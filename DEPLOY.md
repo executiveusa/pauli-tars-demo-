@@ -113,3 +113,25 @@ a fresh empty ledger is indistinguishable from a fresh install. Mitigation is
 operational: ship `receipts.jsonl` off-box (or snapshot `/opt/bars/data` and
 `/opt/bars/anchor` independently) if receipt continuity must survive a full
 data-volume compromise.
+
+## Seventh-review deployment notes
+
+- **Receipt HMAC key**: set `BARS_RECEIPT_KEY` (64+ hex chars) in
+  `/opt/bars/.env` from Infisical (prod path `BARS_RECEIPT_KEY`). The env wins
+  over the on-disk key file, so the chain key never has to live on the data
+  volume. If unset, the server generates `/data/.receipts.key` (0600) as a
+  dev fallback. A wrong/short env value fails closed at startup.
+- **Receipt anchor**: compose mounts `/opt/bars/anchor:/anchor` and sets
+  `BARS_RECEIPT_ANCHOR_PATH=/anchor/receipt.anchor`. Create the host dir once:
+  `mkdir -p /opt/bars/anchor && chown 10001:10001 /opt/bars/anchor`.
+- **Runtime identity**: the image bakes its git SHA at build time
+  (`docker build --build-arg BARS_SHA=<sha>` writes `/app/.bars_sha`);
+  `/health` and `/api/status` report that baked value. `BARS_GIT_SHA` is a
+  dev fallback only. Rollback runs the immutable `bars-sovereign:<prev-sha>`
+  image and verifies `/health` reports exactly that SHA.
+- **Paid conversational mode**: chat and screen analysis are ungated ONLY
+  while paid models are disabled by default. Setting `BARS_ALLOW_PAID=1`
+  puts conversational inference itself behind explicit `chat.exec`/`chat.see`
+  confirmations; do not enable it without an approved paid policy.
+- **Front door**: `index.html` and `static/index.html` are one source kept in
+  tested sync by `scripts/verify_frontdoor.py` (byte-identity check in CI).

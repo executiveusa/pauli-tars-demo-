@@ -41,3 +41,12 @@ assert '"/agent"' in SERVER and 'frontdoor.html' in SERVER, "server must route p
 assert 'self.send_header("Content-Type", "text/html; charset=utf-8")' in SERVER, "static HTML must render as text/html"
 assert "AbortController" in HTML and "8000" in HTML and "isCurrent(req)" in HTML, "live requests must be bounded and stale-safe"
 print("BARS front door contract: PASS")
+
+# tested sync: the cockpit ships from two paths; they must stay byte-identical
+import hashlib, sys
+_a = hashlib.sha256((ROOT / "index.html").read_bytes()).hexdigest()
+_b = hashlib.sha256((ROOT / "static" / "index.html").read_bytes()).hexdigest()
+if _a != _b:
+    print("DRIFT: index.html and static/index.html differ", file=sys.stderr)
+    sys.exit(1)
+print("frontdoor contract + index sync OK")
