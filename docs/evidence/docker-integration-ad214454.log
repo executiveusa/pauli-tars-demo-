@@ -1,0 +1,78 @@
+ISOLATION PROVEN: port 18099 free, no container bars-integration-test, no project barsintegrationtest
+warning: You appear to have cloned an empty repository.
+deploy A (ccd5358d547b1fcfe505a16b70ff1511ba9822ce)
+[deploy] snapshot data -> /tmp/bars-docker-test-1bgqXF/root/backups/data-ccd5358d547b1fcfe505a16b70ff1511ba9822ce.tar.gz (deployment-linked)
+[deploy] fetch + checkout ccd5358d547b1fcfe505a16b70ff1511ba9822ce
+[deploy] build bars-sovereign-integration-test:ccd5358d547b1fcfe505a16b70ff1511ba9822ce (exact)
+[deploy] preserve current deployment for rollback
+[deploy] compose restart (hardening from docker-compose.yml, project barsintegrationtest)
+ Network barsintegrationtest_default  Creating
+ Network barsintegrationtest_default  Created
+ Container bars-integration-test  Creating
+ Container bars-integration-test  Created
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[deploy] wait for health AND exact SHA on 127.0.0.1:18099
+[deploy] OK: bars-sovereign-integration-test:ccd5358d547b1fcfe505a16b70ff1511ba9822ce healthy, /health reports exact SHA
+deploy B (ef4ce8501772bc48538925011b15c4051ea13d77)
+[deploy] snapshot data -> /tmp/bars-docker-test-1bgqXF/root/backups/data-ef4ce8501772bc48538925011b15c4051ea13d77.tar.gz (deployment-linked)
+[deploy] host user cannot read all data files; snapshotting via bars-sovereign-integration-test:current
+[deploy] fetch + checkout ef4ce8501772bc48538925011b15c4051ea13d77
+[deploy] build bars-sovereign-integration-test:ef4ce8501772bc48538925011b15c4051ea13d77 (exact)
+[deploy] preserve current deployment for rollback
+[deploy] compose restart (hardening from docker-compose.yml, project barsintegrationtest)
+ Container bars-integration-test  Recreate
+ Container bars-integration-test  Recreated
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[deploy] wait for health AND exact SHA on 127.0.0.1:18099
+[deploy] OK: bars-sovereign-integration-test:ef4ce8501772bc48538925011b15c4051ea13d77 healthy, /health reports exact SHA
+non-root host: snapshot fallback must have been used
+snapshot fallback: confirmed
+rollback -> A
+[rollback] image-only: post-deploy data/receipts/audit preserved
+[rollback] rolling back from ef4ce8501772bc48538925011b15c4051ea13d77 to ccd5358d547b1fcfe505a16b70ff1511ba9822ce (immutable image, project barsintegrationtest)
+ Container bars-integration-test  Recreate
+ Container bars-integration-test  Recreated
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[rollback] OK: bars-sovereign-integration-test:ccd5358d547b1fcfe505a16b70ff1511ba9822ce healthy, /health verifies exact SHA (rolled back from ef4ce8501772bc48538925011b15c4051ea13d77)
+rollback -> B
+[rollback] image-only: post-deploy data/receipts/audit preserved
+[rollback] rolling back from ccd5358d547b1fcfe505a16b70ff1511ba9822ce to ef4ce8501772bc48538925011b15c4051ea13d77 (immutable image, project barsintegrationtest)
+ Container bars-integration-test  Recreate
+ Container bars-integration-test  Recreated
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[rollback] OK: bars-sovereign-integration-test:ef4ce8501772bc48538925011b15c4051ea13d77 healthy, /health verifies exact SHA (rolled back from ccd5358d547b1fcfe505a16b70ff1511ba9822ce)
+failed-health rollback: broken env must leave bookkeeping untouched
+[rollback] image-only: post-deploy data/receipts/audit preserved
+[rollback] rolling back from ef4ce8501772bc48538925011b15c4051ea13d77 to ccd5358d547b1fcfe505a16b70ff1511ba9822ce (immutable image, project barsintegrationtest)
+ Container bars-integration-test  Recreate
+ Container bars-integration-test  Recreated
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[rollback] FAILED: /health reports 'none', expected ccd5358d547b1fcfe505a16b70ff1511ba9822ce
+[rollback] prior bookkeeping restored; service left on attempted image - investigate before retry
+curl: (56) Recv failure: Connection reset by peer
+failed-health behavior OK (rc=1, bookkeeping untouched; service recovered to healthy B)
+with-data: marker v2 written post-deploy-B, rollback --with-data -> A restores A snapshot (empty)
+[rollback] stopping service before atomic data replace
+[rollback] data replaced atomically from /baroot/backups/data-ccd5358d547b1fcfe505a16b70ff1511ba9822ce.tar.gz (old data at /baroot/.data-old-iKkqY0, via docker)
+[rollback] rolling back from ef4ce8501772bc48538925011b15c4051ea13d77 to ccd5358d547b1fcfe505a16b70ff1511ba9822ce (immutable image, project barsintegrationtest)
+ Container bars-integration-test  Recreate
+ Container bars-integration-test  Recreated
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[rollback] OK: bars-sovereign-integration-test:ccd5358d547b1fcfe505a16b70ff1511ba9822ce healthy, /health verifies exact SHA (rolled back from ef4ce8501772bc48538925011b15c4051ea13d77)
+with-data -> A OK (marker gone, bookkeeping swapped)
+[rollback] stopping service before atomic data replace
+[rollback] data replaced atomically from /baroot/backups/data-ef4ce8501772bc48538925011b15c4051ea13d77.tar.gz (old data at /baroot/.data-old-lWOMLc, via docker)
+[rollback] rolling back from ccd5358d547b1fcfe505a16b70ff1511ba9822ce to ef4ce8501772bc48538925011b15c4051ea13d77 (immutable image, project barsintegrationtest)
+ Container bars-integration-test  Recreate
+ Container bars-integration-test  Recreated
+ Container bars-integration-test  Starting
+ Container bars-integration-test  Started
+[rollback] OK: bars-sovereign-integration-test:ef4ce8501772bc48538925011b15c4051ea13d77 healthy, /health verifies exact SHA (rolled back from ccd5358d547b1fcfe505a16b70ff1511ba9822ce)
+with-data -> B OK (restored exactly the B-linked snapshot)
+DOCKER INTEGRATION: deploy/rollback image identity OK (ccd5358d547b1fcfe505a16b70ff1511ba9822ce <-> ef4ce8501772bc48538925011b15c4051ea13d77, port 18099, project barsintegrationtest)

@@ -1,0 +1,46 @@
+{
+  "artifact": "BARS deploy/rollback real-Docker integration receipt (independently executed)",
+  "verification_boundary": "Executed by GitHub Actions on an ephemeral GitHub-hosted runner, not by the author. Anyone with repo access can re-verify at the run URL below. Independent byte binding: the workflow prints sha256 of the raw log and context file into the PUBLIC run log and the check-run step summary, and ships the same values as evidence-hashes.txt in the artifact; the committed files here are byte-identical to the artifact (hashes below), so the committed bytes are bound to the public run output.",
+  "supersedes": "docker-integration-b77e92dd.json (removed; attested an older code SHA)",
+  "code_sha": "ad2144546e953a90fd8f3a4b4c072f6b29496384",
+  "test_script": "tests/test_deploy_docker.sh",
+  "test_script_sha256": "1ae6b2c30897f4f502604c35c127f4dc948b23d51fc1fda853f2811cad434854",
+  "ci_run": {
+    "id": 34565490749,
+    "url": "https://github.com/executiveusa/pauli-tars-demo-/actions/runs/34565490749",
+    "workflow": "Docker Integration (isolated)",
+    "conclusion": "success",
+    "run_start_utc": "2026-09-11T05:19:06Z",
+    "run_end_utc": "2026-09-11T05:20:16Z",
+    "runner": "GitHub-hosted ubuntu-latest (ephemeral, isolated; no repo secrets granted to the job)",
+    "evidence_artifact": "docker-integration-evidence (docker-integration.log + run-context.txt + evidence-hashes.txt)"
+  },
+  "isolation_parameters": {
+    "image_name": "bars-sovereign-integration-test",
+    "compose_project": "barsintegrationtest",
+    "container_name": "bars-integration-test",
+    "host_port": 18099,
+    "data_and_anchor_paths": "/tmp/bars-docker-test-*/root/{data,anchor}",
+    "env_file": "throwaway test-only token, no real secrets"
+  },
+  "preflight": "ISOLATION PROVEN: port 18099 free, no container bars-integration-test, no project barsintegrationtest",
+  "coverage": {
+    "synthetic_sha_A": "ccd5358d547b1fcfe505a16b70ff1511ba9822ce",
+    "synthetic_sha_B": "ef4ce8501772bc48538925011b15c4051ea13d77",
+    "deploy_A_deploy_B": "both healthy, /health reports exact SHA",
+    "non_root_snapshot_fallback": "host user cannot read all data files; snapshot taken via docker --user 0 helper (confirmed in log)",
+    "image_only_rollback_round_trip": "A->B->A->B, /health verifies exact SHA each time, post-deploy data preserved",
+    "failed_health_rollback": "broken env -> rollback exits 1, current/previous/rolled-back-from bookkeeping untouched, service left on attempted image by design, recovered after env restore",
+    "with_data_round_trip": "marker written post-deploy-B -> rollback --with-data -> A (marker gone, bookkeeping swapped) -> --with-data -> B (restored exactly the B-linked snapshot)",
+    "final_line": "DOCKER INTEGRATION: deploy/rollback image identity OK (ccd5358d547b1fcfe505a16b70ff1511ba9822ce <-> ef4ce8501772bc48538925011b15c4051ea13d77, port 18099, project barsintegrationtest)"
+  },
+  "teardown": "trap cleanup: compose down -v, container removed, test images removed, tmp dirs removed (runner is destroyed after the job regardless)",
+  "exit_status": 0,
+  "raw_log": {
+    "committed_as": "docs/evidence/docker-integration-ad214454.log",
+    "sha256": "3b93113df85dcee7674c043e568613538f4f7fc3da9490355cf4f21abfcd195d",
+    "context_file": "docs/evidence/run-context-ad214454.txt",
+    "context_sha256": "e5aeb0e0a5f47d56433d2408b8fb2299e705bcaa47f76b09c6d98619cbff59a4",
+    "published_hashes_file": "docs/evidence/evidence-hashes-ad214454.txt (identical values, printed in the public run log and step summary)"
+  }
+}
