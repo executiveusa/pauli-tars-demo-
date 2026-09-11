@@ -107,9 +107,13 @@ check("adv-v3-9 login lockout after 5 failures (XFF honored)", codes[-1] == 429,
 TOK = {"Authorization": "Bearer v3tok"}
 s, h, b = req("POST", "/chat", {"text": "hello there"}, TOK)
 check("adv-v3-10 chat ungated by policy", s == 200 and b.get("reply"), str(b.get("reply"))[:60])
-# but a follow-up MISSION the chat proposes still needs its own confirmation
+# a REAL follow-up MISSION still needs its own confirmation (proven live in
+# adv-v9-9b: 409 displays the 8192 bound). Updated 14th round: the existence
+# check now runs BEFORE confirmation consumption, so a dead follow-up 400s
+# without burning a single-use approval (adv-v9-13 proves no burn).
 s, h, b = req("POST", "/followup", {"mission": "m1"}, TOK)
-check("adv-v3-10b followup gated as mission.exec", s == 409 and b.get("need_confirmation", {}).get("action") == "mission.exec", str(b.get("need_confirmation")))
+check("adv-v3-10b dead followup 400s pre-confirmation; live gating proven in adv-v9-9b/v9-13",
+      s == 400 and "no follow-up" in str(b.get("error", "")), f"{s} {b}")
 
 s, h, b = req("POST", "/chat", {"text": "hello there"}, TOK)
 check("adv-v3-11 chat executes without confirmation", s == 200 and b.get("reply"), str(b.get("reply"))[:60])
