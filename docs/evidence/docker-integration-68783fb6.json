@@ -1,0 +1,48 @@
+{
+  "artifact": "BARS deploy/rollback real-Docker integration receipt",
+  "candidate_code_sha": "68783fb6570a16925b0b13e7df7cba8109844464",
+  "test_script": "tests/test_deploy_docker.sh",
+  "test_script_sha256": "41c0a587cfe0156bb97dd75daa9a636ea106960e786380621740bee9d18618a4",
+  "executed_at_utc": "2026-09-11T04:47:34Z",
+  "surface": "verified VPS Docker daemon (Docker 28.5.2, Compose v2.40.3), host identifiers withheld",
+  "isolation_parameters": {
+    "image_name": "bars-sovereign-integration-test",
+    "compose_project": "barsintegrationtest",
+    "container_name": "bars-integration-test",
+    "host_port": 18099,
+    "data_path": "/tmp/bars-docker-test-*/root/data",
+    "anchor_path": "/tmp/bars-docker-test-*/root/anchor",
+    "env_file": "throwaway test-only token, no real secrets"
+  },
+  "preflight_checks": {
+    "port_18099_free": true,
+    "no_container_named_bars_integration_test": true,
+    "no_compose_project_barsintegrationtest": true,
+    "no_images_named_bars_sovereign_integration_test": true,
+    "result": "ISOLATION PROVEN before any resource was created"
+  },
+  "run_results": {
+    "synthetic_sha_A": "11c4d1e08f710da5d65b4e34b3bfbfd867e923b2",
+    "synthetic_sha_B": "4d6e5198bdb7893aa373c65f6b61249b73b9cd64",
+    "deploy_A_health_reports_exact_sha": true,
+    "deploy_B_health_reports_exact_sha": true,
+    "immutable_images_both_present": true,
+    "rollback_to_A_health_reports_exact_sha": true,
+    "rollback_to_B_health_reports_exact_sha": true,
+    "bookkeeping_relinked_after_health_only": true,
+    "final_line": "DOCKER INTEGRATION: deploy/rollback image identity OK (11c4d1e08f710da5d65b4e34b3bfbfd867e923b2 <-> 4d6e5198bdb7893aa373c65f6b61249b73b9cd64, port 18099, project barsintegrationtest)",
+    "exit_status": 0
+  },
+  "teardown_checks": {
+    "container_gone": true,
+    "compose_project_gone": true,
+    "test_images_gone": true,
+    "tmp_dirs_gone": true,
+    "port_18099_free_after": true,
+    "live_services_active_after": ["pauli-tars.service", "caddy"],
+    "staging_untouched_no_current_sha": true
+  },
+  "raw_log_sha256": "781e0ff119305afa2d4a19d21beddd7565a4ed50bef0ef67248afbb60aaf1af0",
+  "raw_log_retention": "raw log captured on the isolated surface, hashed here, then removed with the tree copy; it contained no secrets, tokens, or host identifiers",
+  "notes": "Synthetic repo used an offline local-path bare origin (no network fetch). Base image pulled by pinned digest sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea."
+}
