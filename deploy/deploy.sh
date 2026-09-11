@@ -32,7 +32,7 @@ if ! tar -czf "$ROOT/backups/data-$SHA.tar.gz" -C "$DATA" . 2>/dev/null; then
   docker image inspect "$IMG:current" >/dev/null 2>&1 || {
     echo "[deploy] FATAL: data unreadable by host user and no previous image to snapshot through"; exit 1; }
   echo "[deploy] host user cannot read all data files; snapshotting via $IMG:current"
-  docker run --rm -v "$DATA":/data:ro -v "$ROOT/backups":/backups "$IMG:current"     sh -c "tar -czf /backups/data-$SHA.tar.gz -C /data . && chmod 0666 /backups/data-$SHA.tar.gz"
+  docker run --rm --user 0 -v "$DATA":/data:ro -v "$ROOT/backups":/backups "$IMG:current"     sh -c "tar -czf /backups/data-$SHA.tar.gz -C /data . && chmod 0666 /backups/data-$SHA.tar.gz"
 fi
 
 echo "[deploy] fetch + checkout $SHA"
