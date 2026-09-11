@@ -183,7 +183,7 @@ stub = '''#!/bin/bash
 echo "$(basename $0) $@" >> ''' + SB + '''/calls.log
 if [ "$(basename $0)" = "docker" ] && [ "$1" = "image" ]; then exit 0; fi
 if [ "$(basename $0)" = "git" ] && [ "$1" = "rev-parse" ]; then echo "$BARS_FAKE_HEAD"; exit 0; fi
-if [ "$(basename $0)" = "curl" ]; then echo '{"sha": "'$(cat $BARS_ROOT/current.sha 2>/dev/null)'"}'; exit 0; fi
+if [ "$(basename $0)" = "curl" ]; then echo '{"sha": "'$(cat $BARS_ROOT/.health-sha 2>/dev/null || cat $BARS_ROOT/current.sha 2>/dev/null)'"}'; exit 0; fi
 exit 0
 '''
 for t in ("docker", "curl", "git", "tar"):
@@ -206,6 +206,7 @@ env2 = dict(env, BARS_FAKE_HEAD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 p = subprocess.run(["sh", SB + "/root/app/deploy.sh", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], env=env2, capture_output=True, text=True)
 assert p.returncode == 0, "deploy B failed: " + p.stdout + p.stderr
 os.remove(SB + "/calls.log")
+open(SB + "/root/.health-sha", "w").write("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")  # prev image now serving
 p = subprocess.run(["sh", SB + "/root/app/rollback.sh"], env=env, capture_output=True, text=True)
 calls = open(SB + "/calls.log").read()
 check("adv-v2-DR6 rollback runs immutable prev image via compose", p.returncode == 0 and "compose" in calls and "bars-sovereign:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in calls, f"rc={p.returncode}")

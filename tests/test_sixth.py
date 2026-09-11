@@ -165,7 +165,7 @@ for f in ("deploy.sh", "rollback.sh"):
 shutil.copy(os.path.join(ROOT, "docker-compose.yml"), SB + "/root/app/docker-compose.yml")
 stub = ('#!/bin/bash\necho "$(basename $0) $@" >> ' + SB + '/calls.log\n'
         'if [ "$(basename $0)" = "git" ] && [ "$1" = "rev-parse" ]; then echo "$BARS_FAKE_HEAD"; exit 0; fi\n'
-        'if [ "$(basename $0)" = "curl" ]; then echo "{\\"sha\\": \\"$(cat $BARS_ROOT/current.sha 2>/dev/null)\\"}"; exit 0; fi\n'
+        'if [ "$(basename $0)" = "curl" ]; then echo "{\\"sha\\": \\"$(cat $BARS_ROOT/.health-sha 2>/dev/null || cat $BARS_ROOT/current.sha 2>/dev/null)\\"}"; exit 0; fi\n'
         'exit 0\n')
 for t in ("docker", "curl", "git", "tar", "mktemp", "mv"):
     open(SB + "/bin/" + t, "w").write(stub); os.chmod(SB + "/bin/" + t, 0o755)
@@ -176,6 +176,7 @@ def run(script, sha, head):
                           env=e, capture_output=True, text=True)
 p = run("deploy.sh", A, A); assert p.returncode == 0, p.stdout + p.stderr
 p = run("deploy.sh", Bv, Bv); assert p.returncode == 0, p.stdout + p.stderr
+open(SB + "/root/.health-sha", "w").write(A)   # prev image A now serving
 p = run("rollback.sh", None, "")
 check("adv-v5-9a rollback verifies + relinks (current=A, previous=B)",
       p.returncode == 0 and open(SB + "/root/current.sha").read().strip() == A
@@ -186,6 +187,7 @@ check("adv-v5-9c state tracked: rolled-back-from + snapshot links swap",
       and open(SB + "/root/current.snapshot").read().strip().endswith(f"data-{A}.tar.gz")
       and open(SB + "/root/previous.snapshot").read().strip().endswith(f"data-{Bv}.tar.gz"),
       open(SB + "/root/rolled-back-from.sha").read().strip()[:8])
+open(SB + "/root/.health-sha", "w").write(Bv)  # prev image B serving again
 p = run("rollback.sh", None, "")
 check("adv-v5-9b repeated rollback swaps back (current=B, previous=A)",
       p.returncode == 0 and open(SB + "/root/current.sha").read().strip() == Bv

@@ -485,6 +485,11 @@ class ConfirmationStore:
         "squad.exec": (120, "run a squad of parallel missions", 16384),
         "build.exec": (120, "execute a generated build artifact", 8192),
         "hands.exec": (120, "run a machine-control task on this host", 4096),
+        "tts.exec": (120, "synthesize speech (paid voice call)", 2000),
+        "stt.exec": (120, "transcribe audio (paid speech call)", 3000),
+        "realtime.exec": (120, "open a realtime voice session (paid)", 8000),
+        "model.switch": (120, "switch the active model (changes spend profile)", 0),
+        "hands.config": (120, "change takeover settings (changes spend profile)", 0),
         "paid.enable": (300, "enable paid model escalation", 0),
         "tools.write": (120, "modify the tool registry", 0),
     }

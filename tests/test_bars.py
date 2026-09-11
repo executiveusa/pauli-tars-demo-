@@ -79,7 +79,13 @@ s2,h2,b2 = req("POST","/chat", body={"text":"hi"}); check("chat 401 without toke
 s,h,b = req("GET","/api/models", headers=TOK)
 check("models live", s==200 and b.get("live") and any(m["id"]=="openai/gpt-oss-120b" for m in b["models"]), "")
 check("lanes resolved verified", b["lanes"]["flash"]["model"]=="openai/gpt-oss-20b" and b["lanes"]["flash"]["verified"] and b["lanes"]["worker"]["model"]=="openai/gpt-oss-120b", json.dumps(b["lanes"]))
-s,h,b = req("POST","/model", body={"model":"openai/gpt-oss-20b"}, headers=TOK); check("manual switch valid", s==200 and b.get("ok"))
+def confirmed(action, payload, recipient):
+    s2,h2,cj = req("POST","/api/confirmations", {"action":action,"payload":payload,"recipient":recipient}, headers=TOK)
+    assert s2==200 and cj.get("id"), f"mint failed {s2} {cj}"
+    hh = dict(TOK); hh["X-BARS-Confirmation"] = cj["id"]; return hh
+s,h,b = req("POST","/model", body={"model":"openai/gpt-oss-20b"}, headers=TOK); check("manual switch gated 409", s==409 and b.get("need_confirmation",{}).get("action")=="model.switch")
+# canonical base in this deployment is the configured mock base
+s,h,b = req("POST","/model", body={"model":"openai/gpt-oss-20b"}, headers=confirmed("model.switch",{"model":"openai/gpt-oss-20b","base_url":"http://127.0.0.1:9999/v1"},"/model")); check("manual switch valid", s==200 and b.get("ok"))
 s,h,b = req("POST","/model", body={"model":"not-a-model"}, headers=TOK); check("manual switch invalid 400", s==400)
 s,h,b = req("POST","/remember", body={"text":"test memory item alpha"}, headers=TOK); check("remember ok", s==200 and b.get("ok"))
 brief = "Summarize the history of DJ culture in two paragraphs"
@@ -100,6 +106,8 @@ for _ in range(60):
 check("mission completes via internal worker", b.get("status")=="COMPLETE", str(b.get("status"))+" "+str(b.get("debrief"))[:100])
 check("mission report written", "MOCK-REPLY" in str(b.get("report")), "")
 s,h,b = req("POST","/tts", body={"text":"hello commander"}, headers=TOK)
+check("tts gated 409", s==409 and b.get("need_confirmation",{}).get("action")=="tts.exec", str(s))
+s,h,b = req("POST","/tts", body={"text":"hello commander"}, headers=confirmed("tts.exec",{"text":"hello commander"},"/tts"))
 check("tts graceful fallback (fake key)", s==200 and b.get("browser_fallback"), str(b)[:120])
 s,h,b = req("POST","/stt", headers={"Authorization":"Bearer testtok123","content-type":"audio/webm"}, raw=True)
 check("stt needs audio 400", s==400)

@@ -14,7 +14,7 @@ DATA = "/tmp/v6-data"; shutil.rmtree(DATA, ignore_errors=True); os.makedirs(DATA
 
 # adv-v6-1: runtime identity from image-baked provenance, env is fallback only
 os.environ.update(BARS_OPERATOR_TOKEN="v6tok", BARS_DATA_DIR=DATA,
-                  BARS_NO_BROWSER="1", BARS_DISABLE_HANDS="1",
+                  BARS_NO_BROWSER="1", BARS_DISABLE_HANDS="1", BARS_TEST_MODE="1",
                   BARS_GIT_SHA="e" * 40, BARS_SHA_FILE="/tmp/v6-data/.bars_sha")
 open("/tmp/v6-data/.bars_sha", "w").write("f" * 40)
 import importlib, server
@@ -23,6 +23,12 @@ check("adv-v6-1a baked image SHA beats env echo", server.GIT_SHA == "f" * 40, se
 os.remove("/tmp/v6-data/.bars_sha")
 importlib.reload(server)
 check("adv-v6-1b env fallback only when no baked file", server.GIT_SHA == "e" * 40, server.GIT_SHA[:8])
+# override is TEST-MODE ONLY: without BARS_TEST_MODE the file is ignored
+open("/tmp/v6-data/.bars_sha", "w").write("f" * 40)
+del os.environ["BARS_TEST_MODE"]
+importlib.reload(server)
+check("adv-v6-1c SHA_FILE ignored outside test mode", server.GIT_SHA == "e" * 40, server.GIT_SHA[:8])
+os.remove("/tmp/v6-data/.bars_sha")
 
 # adv-v6-2: receipt HMAC key from env (Infisical), file untouched
 RD = "/tmp/v6-rec"; shutil.rmtree(RD, ignore_errors=True); os.makedirs(RD)

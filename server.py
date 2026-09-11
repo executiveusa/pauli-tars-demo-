@@ -88,7 +88,9 @@ def _read_sha():
     # image-baked provenance wins: /health must report the SHA the code was
     # built from, not a circular runtime env echo
     try:
-        with open(os.environ.get("BARS_SHA_FILE") or os.path.join(ROOT, ".bars_sha")) as f:
+        _sha_file = (os.environ.get("BARS_SHA_FILE")
+                     if os.environ.get("BARS_TEST_MODE") == "1" else None)
+        with open(_sha_file or os.path.join(ROOT, ".bars_sha")) as f:
             v = f.read().strip()
             if re.fullmatch(r"[0-9a-f]{40}", v):
                 return v
@@ -98,6 +100,38 @@ def _read_sha():
 GIT_SHA = _read_sha()
 PAID_MODE = os.environ.get("BARS_ALLOW_PAID", "").strip() == "1"
 _COST_CAP = threading.local()   # per-request enforced cap from the shown bound
+# ONE aggregate budget object per confirmed action, shared across the request
+# thread and every worker thread the action spawns (missions, squad children,
+# acts). Thread-safe; conservative: reserves estimate before the call, charges
+# actuals after, fails closed when the shown aggregate bound would be exceeded.
+MISSION_CAPS = {}
+MISSION_CAPS_LOCK = threading.Lock()
+
+def _cap_register(key, bound):
+    with MISSION_CAPS_LOCK:
+        MISSION_CAPS[key] = {"bound": int(bound or 0), "used": 0}
+
+def _cap_reserve(key, est):
+    """Atomically reserve est against the aggregate bound; fail closed."""
+    if not key:
+        return
+    with MISSION_CAPS_LOCK:
+        e = MISSION_CAPS.get(key)
+        if not e or not e["bound"]:
+            return
+        if e["used"] + est > e["bound"]:
+            raise RuntimeError(
+                f"aggregate cost cap exceeded: {e['used']}+{est} > {e['bound']} "
+                "tokens against the approved worst-case bound. Refusing the call.")
+        e["used"] += est
+
+def _cap_settle(key, est, actual):
+    if not key:
+        return
+    with MISSION_CAPS_LOCK:
+        e = MISSION_CAPS.get(key)
+        if e and e["bound"]:
+            e["used"] = max(0, e["used"] - est + max(0, int(actual)))
 MISSION_TIMEOUT = 900  # seconds
 SQUAD_NAMES = ["CASE", "KIPP", "PLEX", "N1X", "V0X"]
 # the model bench (conversational brain: chat / debrief / vision / duplex)
@@ -540,8 +574,9 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"return r}"
     b"if(r.status===409&&same){return r.clone().json().then(function(j){"
     b"if(j&&j.need_confirmation){return new Promise(function(resolve){"
-    b"approve(j.need_confirmation,bodyText,function(){"
-    b"return mintAndRun(j.need_confirmation.action,payloadObj,p,{u:url,m:m,h:h,b:o.body})"
+    b"var bind=j.need_confirmation.bind_payload||payloadObj;"
+    b"approve(j.need_confirmation,JSON.stringify(bind,null,2),function(){"
+    b"return mintAndRun(j.need_confirmation.action,bind,p,{u:url,m:m,h:h,b:o.body})"
     b".then(function(r2){resolve(r2||r)})})})}"
     b"return r})}"
     b"if(r.ok&&same&&(p==='/chat'||p==='/see')){return r.clone().json().then(function(j){"
@@ -586,6 +621,9 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     _cap = getattr(_COST_CAP, "value", None)
     if _cap:
         max_tokens = min(max_tokens, int(_cap))   # never exceed the shown bound
+    _capkey = getattr(_COST_CAP, "mission", None)
+    _est_agg = max_tokens + 2000                 # conservative incl. input
+    _cap_reserve(_capkey, _est_agg)              # covers routed token raises too
     # BARS AUTO-ROUTER: if user_message provided, route to optimal model
     routed_model = None
     routed_base = None
@@ -618,6 +656,8 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                 # (the handler knows the prompt size better than the router)
                 if routed_tokens >= max_tokens:
                     max_tokens = routed_tokens
+                    if _cap:                       # routed raises stay under the approved bound
+                        max_tokens = min(max_tokens, int(_cap))
         except Exception:
             pass  # Fall back to static config if router fails
 
@@ -726,6 +766,8 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                 _actual = est_in + max_tokens   # missing/invalid usage: settle at estimate
             BUDGET.settle(hold, _actual)
             hold = None
+        _cap_settle(_capkey, _est_agg,
+                    int(_u.get("prompt_tokens", 0)) + int(_u.get("completion_tokens", 0)))
         LAST_USAGE.update({"tokens_in": _u.get("prompt_tokens", 0),
                            "tokens_out": _u.get("completion_tokens", 0),
                            "model": str(model)})
@@ -773,6 +815,8 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         raise
     txt = "".join(b.get("text", "") for b in data.get("content", []))
     _u = data.get("usage") or {}
+    _cap_settle(_capkey, _est_agg,
+                int(_u.get("input_tokens", 0)) + int(_u.get("output_tokens", 0)))
     if hold:
         try:
             _actual = int(_u["input_tokens"]) + int(_u["output_tokens"])
@@ -1126,7 +1170,7 @@ BUILD_NEG = re.compile(
     r"^\s*(?:research|find|analy[sz]|audit|review|study|compare|investigate|look|check)",
     re.I)
 
-def start_mission(brief, agent=None, kind="OPS", parent=None, image=None):
+def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_bound=0):
     if (kind == "OPS" and not BUILD_NEG.search(brief)
             and BUILD_RE.search(brief.strip())):
         kind = "BUILD"
@@ -1147,10 +1191,14 @@ def start_mission(brief, agent=None, kind="OPS", parent=None, image=None):
                 shot = f"screenshot.{ext}"
             except Exception:
                 shot = None
+    cap_key = parent or mid
+    if parent is None and cost_bound:
+        _cap_register(cap_key, cost_bound)
     MISSIONS[mid] = {"id": mid, "brief": brief, "status": "EN ROUTE",
                      "t_start": time.time(), "t_end": None,
                      "cost": None, "debrief": None, "events": [], "last_event": None,
                      "agent": agent or _next_agent(), "kind": kind, "parent": parent,
+                     "cap_key": cap_key if cost_bound or parent else None,
                      "screenshot": shot}
     persist_missions()
     hue.event("deploy")
@@ -1172,13 +1220,16 @@ def squad_split(brief):
         raise ValueError("bad split")
     return subs
 
-def start_squad(brief, subs):
+def start_squad(brief, subs, cost_bound=0):
     pid = uuid.uuid4().hex[:8]
+    if cost_bound:
+        _cap_register(pid, cost_bound)
     MISSIONS[pid] = {"id": pid, "brief": brief, "status": "EN ROUTE",
                      "t_start": time.time(), "t_end": None, "cost": None,
                      "debrief": None, "events": [], "last_event": "Squad deployed.",
                      "agent": "BARS", "kind": "SQUAD", "parent": None, "children": []}
-    children = [start_mission(sb, agent=SQUAD_NAMES[i % len(SQUAD_NAMES)], parent=pid)
+    children = [start_mission(sb, agent=SQUAD_NAMES[i % len(SQUAD_NAMES)], parent=pid,
+                              cost_bound=cost_bound)
                 for i, sb in enumerate(subs)]
     MISSIONS[pid]["children"] = children
     persist_missions()
@@ -1692,6 +1743,9 @@ def run_mission(mid):
         return
     LOCK_FDS[mid] = lock_fd         # fd stays open (lock held) until completion
     m = MISSIONS[mid]
+    # aggregate cost cap travels INTO the worker thread: squad children share
+    # the parent's approved bound, solo missions use their own
+    _COST_CAP.mission = m.get("cap_key")
     mdir = os.path.join(MISSIONS_DIR, mid)
     wdir = os.path.join(WORKBENCH, mid)
     os.makedirs(mdir, exist_ok=True)
@@ -2117,8 +2171,25 @@ class Handler(BaseHTTPRequestHandler):
                         "need_confirmation": {"action": action, "policy": policy,
                                               "recipient": recipient or "",
                                               "cost_bound": cost,
-                                              "ttl_seconds": ttl}}, 409)
+                                              "ttl_seconds": ttl,
+                                              "bind_payload": data}}, 409)
             return False
+
+    def _paid_media_gate(self, action, data, recipient, est_tokens):
+        """Paid media calls (voice/realtime): exact confirmation, atomic budget
+        reservation, input/duration caps enforced by caller, attempt receipts,
+        conservative settlement. Returns the budget hold or None (gated out)."""
+        if not self._need_confirmation(action, data, recipient=recipient):
+            return "gated"
+        hold = f"{action}:{recipient}:{os.urandom(4).hex()}"
+        try:
+            BUDGET.reserve(int(est_tokens), hold)
+        except RuntimeError as e:
+            self._json({"error": str(e)[:200]}, 402)
+            return "gated"
+        _receipt({"kind": "media_attempt", "lane": action, "paid": True,
+                  "est": int(est_tokens), "ms": 0})
+        return hold
 
     def _body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
@@ -2345,13 +2416,25 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/stt":                    # binary audio body — handle before JSON parse
             n = int(self.headers.get("Content-Length", 0) or 0)
-            raw = self.rfile.read(n) if 0 < n <= 12_000_000 else b""
+            raw = self.rfile.read(n) if 0 < n <= 12_000_000 else b""   # 12MB duration cap
             if not raw:
                 self._json({"error": "no audio"}, 400); return
+            hold = self._paid_media_gate(
+                "stt.exec",
+                {"audio_bytes": n,
+                 "audio_sha256": hashlib.sha256(raw).hexdigest(),
+                 "content_type": self.headers.get("Content-Type", "")[:80]},
+                "/stt", n // 1000 + 1000)
+            if hold == "gated":
+                return
             try:
                 text = transcribe(raw, self.headers.get("Content-Type", "audio/webm"))
+                if hold: BUDGET.settle(hold, n // 1000 + 1000)
                 self._json({"text": text})
             except Exception as e:
+                if hold: BUDGET.fail(hold)
+                _receipt({"kind": "media_attempt", "lane": "stt.exec", "paid": True,
+                          "ok": False, "error": str(e)[:160]})
                 self._json({"error": str(e)[:200]}, 500)
             return
 
@@ -2495,21 +2578,28 @@ class Handler(BaseHTTPRequestHandler):
                 act = "squad.exec" if (sq0 or data.get("squad")) else "mission.exec"
             if not self._need_confirmation(act, data, recipient="/brief"):
                 return
+            _approved_bound = getattr(_COST_CAP, "value", 0) or 0
             sq = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if sq or data.get("squad"):
                 core = (sq.group(1).strip() if sq else brief) or brief
+                # the split call itself spends toward the approved aggregate
+                _cap_register("presplit", _approved_bound)
+                _COST_CAP.mission = "presplit"
                 try:
                     subs = squad_split(core)
                 except Exception as e:
                     self._json({"error": "squad split failed: " + str(e)[:120]}, 500); return
+                finally:
+                    _COST_CAP.mission = None
                 if data.get("plan"):                       # dry-run: show the split only
                     self._json({"plan": subs}); return
-                pid = start_squad(core, subs)
+                pid = start_squad(core, subs, cost_bound=_approved_bound)
                 self._json({"id": pid, "status": "EN ROUTE", "squad": True,
                             "children": MISSIONS[pid]["children"], "plan": subs})
             else:
                 nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", brief[:40])
-                mid = start_mission(brief, image=img, agent=nm.group(1) if nm else None)
+                mid = start_mission(brief, image=img, agent=nm.group(1) if nm else None,
+                                    cost_bound=_approved_bound)
                 self._json({"id": mid, "status": "EN ROUTE",
                             "agent": MISSIONS[mid]["agent"]})
 
@@ -2584,13 +2674,19 @@ class Handler(BaseHTTPRequestHandler):
             mm = re.match(r"^data:(image/(?:png|jpeg|webp));base64,(.+)$", img, re.S)
             if not mm:
                 self._json({"error": "bad image"}, 400); return
-            # screen analysis is conversational inference: ungated only while
-            # paid models are disabled by default
-            if PAID_MODE and not self._need_confirmation("chat.see", data, recipient="/see"):
-                return
             q = (data.get("question") or
                  "This is the Commander's screen right now. Tell him what you see and give your "
                  "blunt take — what's good, what's off, what you'd fix first.")
+            # screen analysis is conversational inference: ungated only while
+            # paid models are disabled by default. When gated, the confirmation
+            # binds image metadata (sha256/bytes/type) - never the multi-MB frame.
+            if PAID_MODE:
+                _see_canon = {"question": q,
+                              "image_sha256": hashlib.sha256(img.encode()).hexdigest(),
+                              "image_bytes": len(img),
+                              "image_type": mm.group(1)}
+                if not self._need_confirmation("chat.see", _see_canon, recipient="/see"):
+                    return
             # persistent screen link: follow-ups carry chat history + a FRESH frame,
             # so "what about the title?" refers to what's on screen right now
             msgs = []
@@ -2652,7 +2748,8 @@ class Handler(BaseHTTPRequestHandler):
                                      "in the HUD if you want me actually pulling triggers.",
                             "refused": True}); return
             ACTIONS.pop(aid, None)               # single-use
-            mid = start_mission(act["instruction"], agent="BARS", kind="ACT")
+            mid = start_mission(act["instruction"], agent="BARS", kind="ACT",
+                                cost_bound=getattr(_COST_CAP, "value", 0) or 0)
             self._json({"reply": "Copy. Executing now — watch the board.",
                         "id": mid, "instruction": act["instruction"]})
 
@@ -2709,6 +2806,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/takeover_speed":
             tier = (data.get("tier") or "").strip()
             if HANDS and tier in HANDS.SPEED_TIERS:
+                if not self._need_confirmation("hands.config", {"tier": tier},
+                                               recipient="/takeover_speed"):
+                    return
+                _receipt({"kind": "config", "lane": "hands.config", "paid": False,
+                          "tier": tier})
                 HANDS.set_speed(tier)
                 try:                                  # persist to config.json
                     cfg = _load_json(os.path.join(ROOT, "config.json"))
@@ -2737,9 +2839,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "bad cmd"}, 400)
 
         elif path == "/api/realtime_session":
+            hold = self._paid_media_gate("realtime.exec", {}, "/api/realtime_session", 8000)
+            if hold == "gated":
+                return
             try:
-                self._json(mint_realtime())
+                sess = mint_realtime()
+                if hold: BUDGET.settle(hold, 8000)               # conservative: at estimate
+                self._json(sess)
             except urllib.error.HTTPError as e:
+                if hold: BUDGET.fail(hold)
+                _receipt({"kind": "media_attempt", "lane": "realtime.exec", "paid": True,
+                          "ok": False, "error": f"OpenAI {e.code}"})
                 detail = ""
                 try:
                     detail = e.read().decode()[:300]
@@ -2747,6 +2857,9 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 self._json({"error": f"OpenAI {e.code}: {detail or e.reason}"}, 502)
             except Exception as e:
+                if hold: BUDGET.fail(hold)
+                _receipt({"kind": "media_attempt", "lane": "realtime.exec", "paid": True,
+                          "ok": False, "error": str(e)[:160]})
                 self._json({"error": str(e)[:250]}, 500)
 
         elif path == "/voice":
@@ -2785,6 +2898,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": f"model switch refused: the configured key is bound "
                                      f"to {_tb}, not {_th}. Configure a key for {_th} first."},
                            400); return
+            if not self._need_confirmation("model.switch", {"model": mid, "base_url": target_base},
+                                           recipient="/model"):
+                return
+            _receipt({"kind": "config", "lane": "model.switch", "paid": False,
+                      "model": mid, "base_url": target_base})
             CONFIG["model"] = mid
             CONFIG["base_url"] = target_base
             try:  # persist so the pick survives restarts
@@ -2813,14 +2931,25 @@ class Handler(BaseHTTPRequestHandler):
                         "agent": MISSIONS[nid]["agent"]})
 
         elif path == "/tts":
-            text = (data.get("text") or "").strip()
+            text = (data.get("text") or "").strip()[:4000]     # input cap
             if not text:
                 self._json({"error": "empty"}, 400); return
+            hold = self._paid_media_gate("tts.exec", {"text": text}, "/tts",
+                                         len(text) // 4 + 500)
+            if hold == "gated":
+                return
             try:
                 audio, ctype = tts_bytes(text)
             except Exception as e:
+                if hold: BUDGET.fail(hold)
+                _receipt({"kind": "media_attempt", "lane": "tts.exec", "paid": True,
+                          "ok": False, "error": str(e)[:160]})
                 self._json({"error": str(e)[:200], "fallback": True, "browser_fallback": True}, 200); return
+            if hold: BUDGET.settle(hold, len(text) // 4 + 500)   # conservative: at estimate
             if not audio:
+                if hold: BUDGET.fail(hold)       # paid lane unavailable: conservative settle
+                _receipt({"kind": "media_attempt", "lane": "tts.exec", "paid": True,
+                          "ok": False, "error": "provider unavailable, browser fallback"})
                 self._json({"fallback": True, "browser_fallback": True, "text": text}, 200); return
             self.send_response(200)
             self.send_header("Content-Type", ctype)

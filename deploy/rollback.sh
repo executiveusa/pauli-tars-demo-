@@ -1,8 +1,9 @@
 #!/bin/sh
 # BARS rollback. Runs the IMMUTABLE image of the previous deployment
-# (bars-sovereign:$PREV_SHA), relinks current/previous + their deployment
-# snapshots, records rolled-back-from, and verifies /health reports the exact
-# restored SHA from image-baked provenance.
+# (bars-sovereign:$PREV_SHA) and verifies /health reports that exact SHA from
+# image-baked provenance. Bookkeeping (current/previous + snapshot links +
+# rolled-back-from) is rewritten ONLY after health succeeds; on failure the
+# prior bookkeeping is left untouched and the current tag is restored.
 # Default: image-only - post-deploy data/receipts/audit preserved.
 # --with-data: stop the service, then ATOMICALLY replace data with the
 # snapshot linked to the restored deployment (never an overlay extract).
@@ -38,23 +39,33 @@ else
 fi
 
 echo "[rollback] rolling back from $CUR to $PREV_SHA (immutable image)"
+BARS_IMAGE="bars-sovereign:$PREV_SHA" docker compose -f "$APP/docker-compose.yml" up -d --force-recreate
+
+i=0
+HEALTHY=""
+while :; do
+  GOT=$(curl -fsS -m 3 http://127.0.0.1:4321/health 2>/dev/null | grep -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
+  if [ "$GOT" = "$PREV_SHA" ]; then HEALTHY=1; break; fi
+  i=$((i+1)); [ $i -gt 20 ] && break
+  sleep 2
+done
+
+if [ -z "$HEALTHY" ]; then
+  echo "[rollback] FAILED: /health reports '${GOT:-none}', expected $PREV_SHA" >&2
+  # bookkeeping untouched; restore the current tag to the abandoned image
+  if echo "$CUR" | grep -qE '^[0-9a-f]{40}$'; then
+    docker tag "bars-sovereign:$CUR" bars-sovereign:current 2>/dev/null || true
+  fi
+  echo "[rollback] prior bookkeeping restored; service left on attempted image - investigate before retry" >&2
+  exit 1
+fi
+
+# health verified: NOW relink atomically (previous <- abandoned, current <- restored)
+docker tag "bars-sovereign:$PREV_SHA" bars-sovereign:current
 echo "$CUR" > $ROOT/rolled-back-from.sha
 [ -n "$CUR_SNAP" ] && echo "$CUR_SNAP" > $ROOT/rolled-back-from.snapshot || true
-# relink for REPEATED rollback: previous <- what we abandon, current <- restored
 echo "$CUR" > $ROOT/previous.sha
 [ -n "$CUR_SNAP" ] && echo "$CUR_SNAP" > $ROOT/previous.snapshot || rm -f $ROOT/previous.snapshot
 echo "$PREV_SHA" > $ROOT/current.sha
 [ -n "$PREV_SNAP" ] && echo "$PREV_SNAP" > $ROOT/current.snapshot || rm -f $ROOT/current.snapshot
-
-docker tag "bars-sovereign:$PREV_SHA" bars-sovereign:current
-
-BARS_IMAGE="bars-sovereign:$PREV_SHA" docker compose -f "$APP/docker-compose.yml" up -d --force-recreate
-
-i=0
-while :; do
-  GOT=$(curl -fsS -m 3 http://127.0.0.1:4321/health 2>/dev/null | grep -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
-  [ "$GOT" = "$PREV_SHA" ] && break
-  i=$((i+1)); [ $i -gt 20 ] && { echo "[rollback] FAILED: /health reports '${GOT:-none}', expected $PREV_SHA (image-baked provenance)"; exit 1; }
-  sleep 2
-done
 echo "[rollback] OK: bars-sovereign:$PREV_SHA healthy, /health verifies exact SHA (rolled back from $CUR)"

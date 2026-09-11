@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {
+      "path": "**/*",
+      "merge_system_rule": true,
+      "rule": "Review for correctness, security, reliability, data loss, secret exposure, ownership loss, hidden vendor lock-in, missing error handling, unsafe external side effects, non-idempotent retries, unsupported production claims, missing rollback, and tests that do not prove the changed behavior. Prioritize concrete defects over style. Do not approve a builder's own work."
+    },
+    {
+      "path": "**/*.{ts,tsx,js,jsx,mjs,cjs}",
+      "merge_system_rule": true,
+      "rule": "Check client/server trust boundaries, authentication and authorization, input validation, XSS, injection, insecure direct object references, exposed secrets, race conditions, stale state, unhandled promises, resource leaks, and failures hidden from users or operators."
+    },
+    {
+      "path": "**/*.{sql,prisma}",
+      "merge_system_rule": true,
+      "rule": "Check destructive migrations, missing transaction boundaries, unsafe defaults, authorization and row-level security gaps, irreversible schema changes, data backfill correctness, concurrency hazards, and whether a tested rollback or forward-repair path exists."
+    },
+    {
+      "path": "**/*.{yml,yaml,json,toml}",
+      "merge_system_rule": true,
+      "rule": "Check CI, deployment, infrastructure, permissions, secret handling, environment separation, dependency pinning, production/preview confusion, missing health checks, and whether rollback remains possible. Ignore ordinary formatting unless it changes behavior."
+    },
+    {
+      "path": "**/*.{sh,bash,ps1,Dockerfile}",
+      "merge_system_rule": true,
+      "rule": "Check unsafe shell expansion, command injection, secret leakage, destructive commands, missing strict error handling, non-repeatable operations, privilege escalation, unpinned downloads, partial failure recovery, and rollback behavior."
+    }
+  ]
+}

@@ -25,6 +25,7 @@ git fetch --quiet origin
 git checkout --quiet "$SHA"
 HEAD_NOW=$(git rev-parse HEAD)
 [ "$HEAD_NOW" = "$SHA" ] || { echo "[deploy] FATAL: HEAD $HEAD_NOW != requested $SHA"; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "[deploy] FATAL: worktree dirty or untracked files present - deploy requires a pristine checkout of $SHA" >&2; exit 2; }
 
 echo "[deploy] build bars-sovereign:$SHA (exact)"
 docker build -q --build-arg BARS_SHA="$SHA" -t "bars-sovereign:$SHA" . >/dev/null
