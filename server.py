@@ -129,6 +129,15 @@ def _cap_release(key):
     with MISSION_CAPS_LOCK:
         MISSION_CAPS.pop(key, None)
 
+def _cap_credit(key, amount):
+    """Carry already-settled actuals INTO a cap (e.g. the split call's settled
+    cost into the squad mission cap) so the shown bound covers split+children.
+    Never resets used; only adds."""
+    with MISSION_CAPS_LOCK:
+        e = MISSION_CAPS.get(key)
+        if e and int(amount) > 0:
+            e["used"] += int(amount)
+
 def _cap_settle(key, est, actual):
     if not key:
         return
@@ -2181,10 +2190,25 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _principal(self):
+        """Stable identity of the authenticated caller for confirmation
+        binding: a hash of the bearer token or session id (never the secret)."""
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            return "bearer:" + hashlib.sha256(auth[7:].encode()).hexdigest()[:16]
+        xt = self.headers.get("X-BARS-Token", "")
+        if xt:
+            return "bearer:" + hashlib.sha256(xt.encode()).hexdigest()[:16]
+        sid = _cookie(self.headers, "bars_session")
+        if sid:
+            return "session:" + hashlib.sha256(sid.encode()).hexdigest()[:16]
+        return "anon"
+
     def _need_confirmation(self, action, data, recipient=None):
         cid = self.headers.get("X-BARS-Confirmation", "")
         try:
-            obj = CONFIRMATIONS.consume(cid, action, data, recipient=recipient)
+            obj = CONFIRMATIONS.consume(cid, action, data, recipient=recipient,
+                                        principal=self._principal())
             _COST_CAP.value = obj.get("cost_bound") or 0   # enforce the shown bound
             return True
         except Exception as e:
@@ -2431,7 +2455,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 obj = CONFIRMATIONS.mint(str(data.get("action", "")),
                                          data.get("payload") or {},
-                                         str(data.get("recipient", ""))[:200])
+                                         str(data.get("recipient", ""))[:200],
+                                         principal=self._principal())
             except Exception as e:
                 self._json({"error": str(e)[:200]}, 400); return
             self._json(obj); return
@@ -2610,8 +2635,12 @@ class Handler(BaseHTTPRequestHandler):
                 _pkey = "presplit:" + os.urandom(6).hex()
                 _cap_register(_pkey, _approved_bound)
                 _COST_CAP.mission = _pkey
+                _split_used = 0
                 try:
                     subs = squad_split(core)
+                    with MISSION_CAPS_LOCK:                # settled actual, post-settle
+                        _e = MISSION_CAPS.get(_pkey)
+                        _split_used = _e["used"] if _e else 0
                 except Exception as e:
                     self._json({"error": "squad split failed: " + str(e)[:120]}, 500); return
                 finally:
@@ -2620,6 +2649,9 @@ class Handler(BaseHTTPRequestHandler):
                 if data.get("plan"):                       # dry-run: show the split only
                     self._json({"plan": subs}); return
                 pid = start_squad(core, subs, cost_bound=_approved_bound)
+                # the confirmed shown bound covers split + children: credit the
+                # settled split actual into the squad cap instead of zeroing it
+                _cap_credit(pid, _split_used)
                 self._json({"id": pid, "status": "EN ROUTE", "squad": True,
                             "children": MISSIONS[pid]["children"], "plan": subs})
             else:
@@ -2720,7 +2752,7 @@ class Handler(BaseHTTPRequestHandler):
                 if h.get("role") in ("user", "assistant") and h.get("content"):
                     msgs.append({"role": h["role"], "content": str(h["content"])[:1500]})
             sysp = (persona(STATE, spoken=True) + mem_block() + jobs_block() + tools_block() +
-                    " You are LOOKING AT ZUBAIR'S LIVE SCREEN — the attached image is what it "
+                    " You are LOOKING AT THE COMMANDER'S LIVE SCREEN — the attached image is what it "
                     "shows at this exact moment (it may have changed since earlier questions). "
                     "Answer about what you actually see; be specific. When he asks for your "
                     "OPINION on something on screen, judge it per your honesty and humor "

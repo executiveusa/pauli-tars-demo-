@@ -108,22 +108,103 @@ srv.terminate(); srv.wait(5); mock.terminate()
 # adv-v9-2: OCR supply-chain pin is two levels deep and documented honestly
 wf = open(os.path.join(ROOT, ".github/workflows/vibe-code-review.yml")).read()
 doc = open(os.path.join(ROOT, "docs/SOFTWARE_FACTORY_GATE.md")).read()
-CALLER = "082d72db1398adde532832fa80392b60d074fcf2"
-ACTION = "22af4cb62c97959276055f3b3d977d7aa993adef"
-check("adv-v9-2a caller pins reusable workflow at the internally-pinned SHA",
-      CALLER in wf and "@main" not in wf, "")
+CALLER = "ca8d7a87f30b556a3f898e59d6993f076852a188"
+ACTION = "079c7c28b2e10e47ff1ddd8df8f5138ea2efff79"
+import re as _re
+_uses = _re.findall(r"uses:\s*executiveusa/open-code-review[^\s]*", wf)
+_ocrver = _re.search(r'ocr_version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"', wf)
+check("adv-v9-2a every OCR ref in the caller is a 40-hex SHA pin + exact ocr_version",
+      _uses and all(u.endswith("@" + CALLER) for u in _uses)
+      and "@main" not in wf and _ocrver and _ocrver.group(1) == "1.11.8",
+      str(_uses))
 check("adv-v9-2b gate doc records the two-level chain and the INFO residual",
       CALLER in doc and ACTION in doc and "INFO residual" in doc, "")
 
 # adv-v9-3: rollback-failure behavior documented (attempted image left running,
 # no bookkeeping rewrite) and base image digest-pinned
 dep = open(os.path.join(ROOT, "DEPLOY.md")).read()
-check("adv-v9-3a DEPLOY.md documents failed-rollback end state",
+check("adv-v9-3a DEPLOY.md documents failed-rollback end state (behavior proven in adv-v7-9a/b)",
       "FAILED rollback leaves the attempted previous image RUNNING" in dep
       and "rewrites NO bookkeeping" in dep, "")
 dk = open(os.path.join(ROOT, "Dockerfile")).read()
-check("adv-v9-3b python base image digest-pinned",
-      "FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea" in dk, "")
+_from = [l for l in dk.splitlines() if l.startswith("FROM ")]
+_pin = _re.search(r"^FROM \S+@sha256:[0-9a-f]{64}$", _from[0]) if _from else None
+check("adv-v9-3b base image is digest-pinned (parsed FROM, no mutable tag)",
+      bool(_pin) and all("@sha256:" in l for l in _from), str(_from))
+
+# adv-v9-4: settled split actual carries into the squad cap (never zeroed)
+class FakeRespU:
+    def __init__(self, tin, tout):
+        self.body = json.dumps({"choices": [{"message": {"content": "ok"}}],
+                                "usage": {"prompt_tokens": tin, "completion_tokens": tout}}).encode()
+    def read(self): return self.body
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+_orig2 = server.urllib.request.urlopen
+server.urllib.request.urlopen = lambda req, **kw: FakeRespU(10, 5)
+server._cap_register("presplit:test", 10000)
+server._COST_CAP.mission = "presplit:test"; server._COST_CAP.value = 0
+server.anthropic_chat("s", [{"role": "user", "content": "a"}], max_tokens=10)
+_split_used = server.MISSION_CAPS["presplit:test"]["used"]
+server._cap_register("squad-test", 20)
+server._cap_credit("squad-test", _split_used)
+credited = server.MISSION_CAPS["squad-test"]["used"]
+err4 = None
+try:
+    server._cap_reserve("squad-test", 10)     # 15 credited + 10 > 20 bound
+except RuntimeError as e:
+    err4 = str(e)
+check("adv-v9-4 settled split actual credited into squad cap; bound accounts it fail-closed",
+      _split_used == 15 and credited == 15 and err4 and "aggregate cost cap" in err4,
+      f"split={_split_used} credited={credited} err={str(err4)[:50]}")
+server._cap_release("presplit:test"); server._cap_release("squad-test")
+server._COST_CAP.mission = None
+server.urllib.request.urlopen = _orig2
+
+# adv-v9-5: confirmations are bound to the minting principal
+mock2 = subprocess.Popen([sys.executable, "/tmp/v10_mock.py"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+env2 = dict(os.environ, BARS_DATA_DIR=os.path.join(DATA, "live2"), BARS_OPERATOR_TOKEN="v10tok",
+            GROQ_API_TOKEN="fake", BARS_BASE_URL="http://127.0.0.1:9999/v1",
+            BARS_GROQ_BASE="http://127.0.0.1:9999/v1", BARS_FREE_PROVIDERS="127.0.0.1",
+            BARS_NO_BROWSER="1", BARS_DISABLE_HANDS="1", BARS_PORT="4344")
+srv2 = subprocess.Popen([sys.executable, "server.py"], cwd=ROOT, env=env2,
+                        stdout=open("/tmp/bars_v10b.log", "w"), stderr=subprocess.STDOUT)
+B2 = "http://127.0.0.1:4344"
+up = False
+for _ in range(60):
+    try:
+        urllib.request.urlopen(B2 + "/health", timeout=2); up = True; break
+    except Exception:
+        time.sleep(0.25)
+assert up, "live server 2 did not start"
+def req2(method, path, body=None, headers=None):
+    h = dict(headers or {}); data = None
+    if body is not None: data = json.dumps(body).encode(); h["content-type"] = "application/json"
+    r = urllib.request.Request(B2 + path, data=data, headers=h, method=method)
+    try:
+        with urllib.request.urlopen(r, timeout=15) as resp:
+            return resp.status, dict(resp.headers), json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try: return e.code, dict(e.headers), json.loads(e.read() or b"{}")
+        except Exception: return e.code, dict(e.headers), {}
+# mint via BEARER principal
+s, h, cj = req2("POST", "/api/confirmations", {"action": "mission.plan", "payload": {"brief": "squad: research presplit race P", "plan": True}, "recipient": "/brief"}, TOK)
+cid = cj["id"]
+# establish a SESSION principal (same token, different principal identity)
+s, h, sess = req2("POST", "/api/session", {"token": "v10tok"})
+cookie = h.get("Set-Cookie", "").split(";")[0]
+csrf = sess.get("csrf", "")
+SH = {"Cookie": cookie, "X-CSRF-Token": csrf, "X-BARS-Confirmation": cid}
+s, h, b = req2("POST", "/brief", {"brief": "squad: research presplit race P", "plan": True}, SH)
+check("adv-v9-5a confirmation minted by bearer is refused for a session principal",
+      s == 409 and "principal mismatch" in str(b.get("error", "")), f"{s} {str(b)[:100]}")
+# same-principal path still works (bearer mint + bearer consume)
+s, h, cj = req2("POST", "/api/confirmations", {"action": "mission.plan", "payload": {"brief": "squad: research presplit race P", "plan": True}, "recipient": "/brief"}, TOK)
+H = dict(TOK); H["X-BARS-Confirmation"] = cj["id"]
+s, h, b = req2("POST", "/brief", {"brief": "squad: research presplit race P", "plan": True}, H)
+check("adv-v9-5b same-principal mint+consume still succeeds", s == 200 and b.get("plan"), f"{s} {str(b)[:80]}")
+srv2.terminate(); srv2.wait(5); mock2.terminate()
 
 print(f"{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)

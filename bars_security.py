@@ -480,7 +480,7 @@ class ConfirmationStore:
         "chat.see": (180, "analyze a shared screen frame (one model call)", 4096),
         "chat.followup": (180, "run a follow-up turn (one model call)", 4096),
         "act.exec": (180, "queue a spoken/action directive", 1024),
-        "mission.plan": (120, "plan a squad split (one model call, no execution)", 1024),
+        "mission.plan": (120, "plan a squad split (one model call, no execution)", 4096),
         "mission.exec": (120, "run a mission (spends model tokens)", 8192),
         "squad.exec": (120, "run a squad of parallel missions", 16384),
         "build.exec": (120, "execute a generated build artifact", 8192),
@@ -498,7 +498,7 @@ class ConfirmationStore:
         self._items = {}
         self._lock = threading.Lock()
 
-    def mint(self, action, payload, recipient):
+    def mint(self, action, payload, recipient, principal="anon"):
         if action not in self.POLICIES:
             raise SecurityConfigError(f"no confirmation policy for action {action!r}")
         ttl, desc, cost = self.POLICIES[action]
@@ -507,6 +507,7 @@ class ConfirmationStore:
             "v": VERSION,
             "action": action,
             "policy": desc,
+            "principal": principal,
             "payload_sha256": hashlib.sha256(
                 json.dumps(payload, sort_keys=True).encode()).hexdigest(),
             "payload_preview": json.dumps(payload, sort_keys=True)[:400],
@@ -525,12 +526,14 @@ class ConfirmationStore:
         for k in [k for k, v in self._items.items() if v["expires_at"] < now]:
             del self._items[k]
 
-    def consume(self, cid, action, payload, recipient=None):
+    def consume(self, cid, action, payload, recipient=None, principal="anon"):
         with self._lock:
             self._sweep_locked()
             obj = self._items.pop(cid, None)     # single-use, always consumed
         if not obj:
             raise RuntimeError("confirmation unknown or already used")
+        if obj.get("principal", "anon") != principal:
+            raise RuntimeError("confirmation principal mismatch - refused")
         if obj["action"] != action:
             raise RuntimeError("confirmation action mismatch")
         if recipient is not None and obj["recipient"] != recipient:

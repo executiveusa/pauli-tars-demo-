@@ -1,0 +1,39 @@
+name: Docker Integration (isolated)
+
+# Independent execution surface for the deploy/rollback image-identity test.
+# Runs on an ephemeral GitHub-hosted runner (its own Docker daemon, nothing
+# shared with any live surface). No secrets, no credentials, no paid calls.
+on:
+  push:
+    branches: [fix/bars-sovereign-runtime]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (pinned)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Record run context
+        run: |
+          echo "RUN_START_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee run-context.txt
+          echo "CODE_SHA=$GITHUB_SHA" | tee -a run-context.txt
+          echo "TEST_SCRIPT_SHA256=$(sha256sum tests/test_deploy_docker.sh | awk '{print $1}')" | tee -a run-context.txt
+      - name: Run isolated deploy/rollback integration
+        run: |
+          BARS_DOCKER_TEST=1 sh tests/test_deploy_docker.sh 2>&1 | tee docker-integration.log
+      - name: Record run end
+        if: always()
+        run: echo "RUN_END_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a run-context.txt
+      - name: Upload evidence (pinned)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: docker-integration-evidence
+          path: |
+            docker-integration.log
+            run-context.txt
