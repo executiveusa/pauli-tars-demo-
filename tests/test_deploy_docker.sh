@@ -117,7 +117,11 @@ set -e
 # rolled-back-from.sha must be UNCHANGED (still A from the rollback -> B above)
 [ "$(cat $BARS_ROOT/rolled-back-from.sha)" = "$SHA_A" ]
 echo "BARS_OPERATOR_TOKEN=integration-test-token" > "$ROOT/test.env"
-echo "failed-health behavior OK (rc=$RC, current=B previous=A, no rolled-back-from)"
+# the failed rollback leaves the service crash-looping BY DESIGN; restore the
+# env and recreate so the service is healthy B again before the next phase
+BARS_IMAGE="$IMG:current" BARS_HOST_PORT="$TEST_PORT" docker compose -p "$PROJECT" -f "$ROOT/root/app/docker-compose.yml" up -d --force-recreate >/dev/null 2>&1
+i=0; while [ "$(health_sha)" != "$SHA_B" ]; do i=$((i+1)); [ $i -gt 20 ] && { echo "FATAL: service did not recover after env restore" >&2; exit 1; }; sleep 2; done
+echo "failed-health behavior OK (rc=$RC, bookkeeping untouched; service recovered to healthy B)"
 
 # --- --with-data rollback: atomic data restore linked to the deployment -----
 echo "with-data: marker v2 written post-deploy-B, rollback --with-data -> A restores A snapshot (empty)"
