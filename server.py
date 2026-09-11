@@ -1699,6 +1699,8 @@ def run_internal_mission(m):
             # same terminal state + persistence as the post-call path
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            if m.get("cap_key") and m.get("cap_key") == mid:
+                _cap_release(mid)            # solo cap only; squad caps belong to the parent
             persist_missions()
             return
         report = anthropic_chat(
@@ -1710,6 +1712,8 @@ def run_internal_mission(m):
         if m.get("_abort"):
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            if m.get("cap_key") and m.get("cap_key") == mid:
+                _cap_release(mid)            # solo cap only; squad caps belong to the parent
             persist_missions()
             return
         if not report.strip():
@@ -3001,11 +3005,13 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/followup":
             mid = data.get("id", "")
-            if not self._need_confirmation("mission.exec", data, recipient="/followup"):
-                return
             m = MISSIONS.get(mid)
             if not m or not m.get("follow_up"):
+                # checked BEFORE consuming the single-use confirmation so a
+                # dead follow-up never burns the user's approval
                 self._json({"error": "no follow-up available"}, 400); return
+            if not self._need_confirmation("mission.exec", data, recipient="/followup"):
+                return
             # enforce the exact displayed bound for the follow-up, matching /act and /brief
             nid = start_mission(m["follow_up"],
                                 cost_bound=getattr(_COST_CAP, "value", 0) or 0)

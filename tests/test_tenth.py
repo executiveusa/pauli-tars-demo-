@@ -136,6 +136,16 @@ for _ in range(80):
     time.sleep(0.25)
 check("adv-v9-9e bounded follow-up completes under its cap", st == "COMPLETE", str(st))
 
+# adv-v9-13: a dead follow-up returns 400 BEFORE the confirmation is consumed
+H13 = mint("mission.exec", {"id": "deadbeef"}, "/followup")
+s, h, b = req("POST", "/followup", {"id": "deadbeef"}, H13)
+r1 = (s, b.get("error"))
+s, h, b = req("POST", "/followup", {"id": "deadbeef"}, H13)   # same confirmation again
+r2 = (s, b.get("error"))
+check("adv-v9-13 dead follow-up: 400 without consuming the single-use confirmation",
+      r1[0] == 400 and r2[0] == 400 and "no follow-up" in str(r1[1]) and "no follow-up" in str(r2[1]),
+      f"first={r1} second={r2}")
+
 srv.terminate(); srv.wait(5); mock.terminate()
 
 # adv-v9-2: OCR supply-chain pin is two levels deep and documented honestly
@@ -271,7 +281,8 @@ check("adv-v9-8 docker test covers failed-health, --with-data cycle, snapshot fa
 # persisted terminal state (was: stuck ABORTING forever, no model call made)
 m10 = {"id": "deadrace", "brief": "race window", "kind": "OPS", "events": [],
        "_abort": True, "status": "ABORTING", "t_start": time.time(), "t_end": None,
-       "agent": "CASE", "parent": None, "cap_key": None}
+       "agent": "CASE", "parent": None, "cap_key": "deadrace"}
+server._cap_register("deadrace", 8192)          # solo mission carries its own cap
 server.MISSIONS["deadrace"] = m10
 called10 = []
 _orig_ac = server.anthropic_chat
@@ -290,7 +301,46 @@ check("adv-v9-10 pre-first-call abort: ABORTED + persisted, zero model calls",
       m10["status"] == "ABORTED" and m10["t_end"] and not called10
       and _rec is not None and _rec.get("status") == "ABORTED",
       f"status={m10['status']} calls={len(called10)} persisted={(_rec or {}).get('status')}")
+check("adv-v9-10b pre-call abort releases the dead solo cap",
+      "deadrace" not in server.MISSION_CAPS, str(list(server.MISSION_CAPS)))
 del server.MISSIONS["deadrace"]
+
+# adv-v9-11: abort landing DURING the first model call (post-call path) also
+# closes out and releases the dead solo cap
+m11 = {"id": "midrace1", "brief": "race window post", "kind": "OPS", "events": [],
+       "status": "EN ROUTE", "t_start": time.time(), "t_end": None,
+       "agent": "CASE", "parent": None, "cap_key": "midrace1"}
+server._cap_register("midrace1", 8192)
+server.MISSIONS["midrace1"] = m11
+called11 = []
+def _abort_during_call(*a, **k):
+    called11.append(1)
+    m11["_abort"] = True                  # abort lands while the call is in flight
+    return "report body"
+server.anthropic_chat = _abort_during_call
+try:
+    server.run_internal_mission(m11)
+finally:
+    server.anthropic_chat = _orig_ac
+check("adv-v9-11a post-call abort: ABORTED after exactly one model call",
+      m11["status"] == "ABORTED" and m11["t_end"] and len(called11) == 1,
+      f"status={m11['status']} calls={len(called11)}")
+check("adv-v9-11b post-call abort releases the dead solo cap",
+      "midrace1" not in server.MISSION_CAPS, str(list(server.MISSION_CAPS)))
+del server.MISSIONS["midrace1"]
+
+# adv-v9-12: a squad CHILD abort never releases the shared parent cap
+m12 = {"id": "child001", "brief": "child race", "kind": "OPS", "events": [],
+       "_abort": True, "status": "ABORTING", "t_start": time.time(), "t_end": None,
+       "agent": "KIPP", "parent": "parentpid", "cap_key": "parentpid"}
+server._cap_register("parentpid", 16384)
+server.MISSIONS["child001"] = m12
+server.run_internal_mission(m12)
+check("adv-v9-12 aborted squad child leaves the shared parent cap registered",
+      m12["status"] == "ABORTED" and "parentpid" in server.MISSION_CAPS,
+      f"status={m12['status']} caps={list(server.MISSION_CAPS)}")
+del server.MISSIONS["child001"]
+server._cap_release("parentpid")
 
 print(f"{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)

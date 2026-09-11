@@ -88,7 +88,7 @@ ocr review --audience agent --background "<business and risk context>" --commit 
 ocr scan --background "<business and risk context>"
 ```
 
-Use `.opencodereview/rule.json` automatically when present. Never hardcode credentials.
+The trusted review policy is the centrally pinned `policy/rule.json` shipped inside the SHA-pinned CI action; a candidate-checked-out `.opencodereview/rule.json` is NOT automatically trusted and is prohibited from governing CI review (the candidate never controls its own judge). Never hardcode credentials.
 
 ### Delegation fallback
 
