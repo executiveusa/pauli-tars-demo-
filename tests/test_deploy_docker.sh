@@ -114,7 +114,8 @@ set -e
 [ "$RC" != "0" ]
 [ "$(cat $BARS_ROOT/current.sha)" = "$SHA_B" ]
 [ "$(cat $BARS_ROOT/previous.sha)" = "$SHA_A" ]
-[ ! -f $BARS_ROOT/rolled-back-from.sha ]
+# rolled-back-from.sha must be UNCHANGED (still A from the rollback -> B above)
+[ "$(cat $BARS_ROOT/rolled-back-from.sha)" = "$SHA_A" ]
 echo "BARS_OPERATOR_TOKEN=integration-test-token" > "$ROOT/test.env"
 echo "failed-health behavior OK (rc=$RC, current=B previous=A, no rolled-back-from)"
 
