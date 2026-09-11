@@ -8,12 +8,13 @@ Standalone. Never touches brain-studio (Jarvis) or mission-control.
 Brief a mission → BARS executes it headless (draft-safe `claude -p`)
 → smooth spoken debrief when you return. Flavor and authenticity are dials.
 """
-import base64, json, os, re, shutil, signal, socket, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error, uuid
+import base64, fcntl, hashlib, hmac, json, os, re, shutil, signal, socket, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 import hue
+import bars_security as sec
 if os.environ.get("BARS_DISABLE_HANDS") == "1":
     HANDS = None                # sovereign/headless deployments: no machine control
 else:
@@ -74,8 +75,15 @@ DUPLEX_PORT = int(os.environ.get("BARS_DUPLEX_PORT", "4323"))
 BIND = os.environ.get("BARS_BIND", "127.0.0.1")
 INTERNAL_WORKER = os.environ.get("BARS_INTERNAL_WORKER", "1") != "0"
 OPERATOR_TOKEN = os.environ.get("BARS_OPERATOR_TOKEN", "")
-ALLOWED_ORIGINS = [o.strip().rstrip("/") for o in
-                   os.environ.get("BARS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if not OPERATOR_TOKEN and os.environ.get("BARS_OPEN_LOCAL") != "1":
+    raise SystemExit("[bars] FATAL: BARS_OPERATOR_TOKEN required (fail-closed). "
+                     "Set BARS_OPEN_LOCAL=1 for local dev only.")
+ALLOW_LOCAL_DEV = os.environ.get("BARS_ALLOW_LOCAL_DEV", "1") == "1"
+try:
+    ALLOWED_ORIGINS = sec.parse_origin_allowlist(
+        os.environ.get("BARS_ALLOWED_ORIGINS", ""), ALLOW_LOCAL_DEV)
+except sec.SecurityConfigError as e:
+    raise SystemExit(f"[bars] FATAL security config: {e}")
 GIT_SHA = os.environ.get("BARS_GIT_SHA", "")
 MISSION_TIMEOUT = 900  # seconds
 SQUAD_NAMES = ["CASE", "KIPP", "PLEX", "N1X", "V0X"]
@@ -187,6 +195,7 @@ def duplex_token():
                     json.dump({"token": tok, "_use": "Bearer token for the OpenAI-compatible "
                                f"duplex brain on port {DUPLEX_PORT} — see DUPLEX.md"}, f, indent=1)
                 os.replace(tmp, DUPLEX_PATH)
+                os.chmod(DUPLEX_PATH, 0o600)
             except Exception:
                 try:
                     os.unlink(tmp)
@@ -195,9 +204,11 @@ def duplex_token():
         return tok
     except Exception:
         tok = uuid.uuid4().hex + uuid.uuid4().hex[:8]
-        with open(DUPLEX_PATH, "w") as f:
+        fd = os.open(DUPLEX_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump({"token": tok, "_use": "Bearer token for the OpenAI-compatible "
                        f"duplex brain on port {DUPLEX_PORT} — see DUPLEX.md"}, f, indent=1)
+        os.chmod(DUPLEX_PATH, 0o600)
         return tok
 
 DUPLEX_TOKEN = duplex_token()
@@ -373,59 +384,30 @@ def _paid_route(host):
     h = (host or "").lower()
     return not any(f in h for f in FREE_PROVIDERS)
 
-REC_LOCK = threading.Lock()
+SESSIONS = sec.SessionStore()
+BUDGET = sec.BudgetLedger(os.path.join(DATA, "budget.json"),
+                          int(os.environ.get("BARS_PAID_TOKEN_BUDGET", "100000")))
+RECEIPTS = sec.ReceiptLedger(RECEIPTS_PATH, os.path.join(DATA, ".receipts.key"))
+CONFIRMATIONS = sec.ConfirmationStore()
 
 def _receipt(ev):
-    """Durable routing receipt: one JSON line per model call in DATA/receipts.jsonl."""
-    ev = dict(ev)
-    ev.setdefault("ts", time.time())
-    try:
-        with REC_LOCK:
-            if os.path.exists(RECEIPTS_PATH) and os.path.getsize(RECEIPTS_PATH) > 4_000_000:
-                with open(RECEIPTS_PATH) as f:
-                    tail = f.read()[-1_000_000:]
-                with open(RECEIPTS_PATH, "w") as f:
-                    f.write(tail)
-            with open(RECEIPTS_PATH, "a") as f:
-                f.write(json.dumps(ev) + "\n")
-    except Exception:
-        pass
+    """Durable integrity-protected routing receipt (HMAC-chained JSONL)."""
+    RECEIPTS.append(ev)
 
 def _receipts_tail(n=500):
-    try:
-        with open(RECEIPTS_PATH) as f:
-            lines = f.readlines()[-n:]
-        out = []
-        for ln in lines:
-            try:
-                out.append(json.loads(ln))
-            except Exception:
-                pass
-        return out
-    except Exception:
-        return []
+    return RECEIPTS.tail(n)
 
-def _paid_tokens_today():
-    day = time.strftime("%Y-%m-%d")
-    total = 0
-    for ev in _receipts_tail(20000):
-        if ev.get("paid") and time.strftime("%Y-%m-%d", time.localtime(ev.get("ts", 0))) == day:
-            total += int(ev.get("tokens_in", 0) or 0) + int(ev.get("tokens_out", 0) or 0)
-    return total
-
-def _enforce_paid(model):
-    """Fail-closed paid escalation: a paid route runs ONLY when explicitly
-    enabled AND under its hard daily token budget. Default posture: free lanes
-    only; a blocked call errors truthfully instead of silently spending."""
+def _paid_gate(model, est_tokens):
+    """Fail-closed paid escalation with an atomic durable reservation: a paid
+    route runs ONLY when explicitly enabled AND the reservation fits the hard
+    daily budget. Returns the hold id to settle/release after the attempt."""
     if os.environ.get("BARS_ALLOW_PAID") != "1":
         raise RuntimeError(
             f"Paid route '{model}' is blocked (fail-closed). Configure a free lane "
             "or set BARS_ALLOW_PAID=1 with BARS_PAID_TOKEN_BUDGET.")
-    budget = int(os.environ.get("BARS_PAID_TOKEN_BUDGET", "100000"))
-    used = _paid_tokens_today()
-    if used >= budget:
-        raise RuntimeError(
-            f"Paid token budget exhausted today ({used}/{budget}). Fail-closed.")
+    hold = uuid.uuid4().hex
+    BUDGET.reserve(est_tokens, hold)
+    return hold
 
 def _latency_stats():
     evs = [e for e in _receipts_tail(300) if e.get("kind") == "chat"]
@@ -437,39 +419,54 @@ def _latency_stats():
             "avg_ms_flash_lane": avg(lambda e: e.get("lane") in ("flash", "direct"))}
 
 def _origin_allowed(origin):
-    o = (origin or "").strip().rstrip("/")
-    if not o:
-        return True                       # same-origin browsers send no Origin
-    if re.match(r"https?://(localhost|127\.0\.0\.1)(:\d+)?$", o):
-        return True
-    return o in ALLOWED_ORIGINS
+    return sec.origin_allowed(origin, ALLOWED_ORIGINS, ALLOW_LOCAL_DEV)
 
-def _token_ok(headers):
-    """Operator bearer token: Authorization, X-BARS-Token, or the UI shim cookie.
-    With BARS_OPERATOR_TOKEN unset the server runs in open local mode."""
+def _cookie(headers, name):
+    m = re.search(r"(?:^|;\s*)" + re.escape(name) + r"=([^\s;]+)", headers.get("Cookie", ""))
+    return m.group(1) if m else ""
+
+def _token_ok(headers, mutate=False):
+    """Operator auth: bearer for CLI/API clients, or an HttpOnly session
+    cookie for browsers. Mutating calls authenticated by session also require
+    the double-submit CSRF header. Open local mode only via BARS_OPEN_LOCAL=1."""
     if not OPERATOR_TOKEN:
         return True
-    if headers.get("Authorization", "") == f"Bearer {OPERATOR_TOKEN}":
+    if hmac.compare_digest(headers.get("Authorization", ""), f"Bearer {OPERATOR_TOKEN}"):
         return True
-    if headers.get("X-BARS-Token", "") == OPERATOR_TOKEN:
+    if hmac.compare_digest(headers.get("X-BARS-Token", ""), OPERATOR_TOKEN):
         return True
-    m = re.search(r"(?:^|;\s*)bars_token=([^\s;]+)", headers.get("Cookie", ""))
-    return bool(m) and m.group(1) == OPERATOR_TOKEN
+    sid = _cookie(headers, "bars_session")
+    if not SESSIONS.valid(sid):
+        return False
+    if mutate:
+        return SESSIONS.check_csrf(sid, headers.get("X-CSRF-Token", ""))
+    return True
 
 # Injected into served pages when an operator token is configured: adds the
 # stored bearer to same-origin fetches, shares it via cookie for plain page
 # navigations, and prompts once on 401 (never for the public status polls).
-AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;var K='bars_operator_token';"
-    b"function t(){try{return localStorage.getItem(K)||''}catch(e){return''}}"
-    b"function save(v){try{localStorage.setItem(K,v)}catch(e){}document.cookie='bars_token='+v+';path=/;SameSite=Lax'}"
-    b"if(t())document.cookie='bars_token='+t()+';path=/;SameSite=Lax';"
-    b"var QUIET=['/api/status','/missions'];var of=window.fetch.bind(window);"
+AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
+    b"function ck(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):''}"
+    b"var SENS={'/brief':'mission.exec','/squad':'squad.exec','/tools':'tools.write'};"
+    b"var of=window.fetch.bind(window);"
     b"window.fetch=function(u,o){o=o||{};var url=(typeof u==='string')?u:(u&&u.url)||'';"
-    b"var same=url[0]==='/'||url.indexOf(location.origin)===0;var h=new Headers(o.headers||{});"
-    b"if(same&&t()&&!h.has('Authorization'))h.set('Authorization','Bearer '+t());o.headers=h;"
-    b"return of(u,o).then(function(r){if(r.status===401&&same&&QUIET.indexOf(url.split('?')[0])===-1){"
-    b"var v=window.prompt('BARS operator token');if(v){save(v);var h2=new Headers(o.headers||{});"
-    b"h2.set('Authorization','Bearer '+v);o.headers=h2;return of(u,o)}}return r})}})();</script>")
+    b"var same=url[0]==='/'||url.indexOf(location.origin)===0;"
+    b"var p=url.replace(location.origin,'').split('?')[0];"
+    b"var h=new Headers(o.headers||{});var m=(o.method||'GET').toUpperCase();"
+    b"if(same&&m!=='GET'){var c=ck('bars_csrf');if(c)h.set('X-CSRF-Token',c);}o.headers=h;"
+    b"var go=function(){return of(u,o).then(function(r){"
+    b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'){"
+    b"var v=window.prompt('BARS operator token');"
+    b"if(v){return of('/api/session',{method:'POST',headers:{'content-type':'application/json'},"
+    b"body:JSON.stringify({token:v})}).then(function(l){if(l.ok){return window.fetch(u,o)}return r})}}"
+    b"return r})};"
+    b"if(same&&m==='POST'&&SENS[p]&&!h.has('X-BARS-Confirmation')){"
+    b"var payload={};try{payload=JSON.parse(o.body||'{}')}catch(e){}"
+    b"return of('/api/confirmations',{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':ck('bars_csrf')},"
+    b"body:JSON.stringify({action:SENS[p],payload:payload,recipient:p})}).then(function(c){return c.json().then(function(cj){"
+    b"if(cj&&cj.id){var h2=new Headers(o.headers||{});h2.set('X-BARS-Confirmation',cj.id);o.headers=h2;}return go()})})"
+    b".catch(function(){return go()})}"
+    b"return go()}})();</script>")
 
 def _inject_auth_shim(body):
     idx = body.lower().find(b"</head>")
@@ -551,8 +548,10 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     max_tokens = min(max_tokens, int(os.environ.get("BARS_MAX_TOKENS_CAP", "4096")))
     _host = (base or "https://openrouter.ai/api/v1") if use_or else "https://api.anthropic.com"
     paid = _paid_route(_host)
+    hold = None
     if paid:
-        _enforce_paid(str(model))
+        est_in = (len(system) + sum(len(str(m.get("content", ""))) for m in messages)) // 4
+        hold = _paid_gate(str(model), est_in + max_tokens)
     t0 = time.time()
     if use_or:
         url = (base or "https://openrouter.ai/api/v1") + "/chat/completions"
@@ -570,10 +569,47 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                      "User-Agent": "BARS-Pauli/1.0",
                      "HTTP-Referer": "https://pauli.effect",
                      "X-Title": "BARS Pauli"})
-        with urllib.request.urlopen(req, timeout=90) as r:
-            data = json.load(r)
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                data = json.load(r)
+        except Exception as e:
+            # bounded fallback: a routed lane that fails falls back once to the
+            # static lane (cost-gated separately), every attempt receipted.
+            if hold:
+                BUDGET.release(hold); hold = None
+            _receipt({"kind": "chat_attempt", "lane": LAST_USAGE.get("lane"),
+                      "model": str(model), "paid": paid, "ok": False,
+                      "error": str(e)[:200], "ms": int((time.time() - t0) * 1000)})
+            if routed_model and (CONFIG["anthropic_key"] or CONFIG.get("base_url")):
+                model = CONFIG["model"]
+                api_key = CONFIG["anthropic_key"]
+                base = (CONFIG.get("base_url") or "").strip().rstrip("/")
+                LAST_USAGE["lane"], LAST_USAGE["routing"] = "static-fallback", "fallback-after-error"
+                url = (base or "https://openrouter.ai/api/v1") + "/chat/completions"
+                body = json.dumps({
+                    "model": model if ("/" in str(model) or base) else f"anthropic/{model}",
+                    "max_tokens": max_tokens,
+                    "messages": oai_msgs, "stream": False}).encode()
+                fhost = base or "https://openrouter.ai/api/v1"
+                if _paid_route(fhost):
+                    hold = _paid_gate(str(model), est_in + max_tokens)
+                t0 = time.time()
+                req = urllib.request.Request(
+                    url, data=body,
+                    headers={"Authorization": f"Bearer {api_key}",
+                             "content-type": "application/json",
+                             "User-Agent": "BARS-Pauli/1.0",
+                             "HTTP-Referer": "https://pauli.effect",
+                             "X-Title": "BARS Pauli"})
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    data = json.load(r)
+            else:
+                raise
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         _u = data.get("usage") or {}
+        if hold:
+            BUDGET.settle(hold, int(_u.get("prompt_tokens", 0)) + int(_u.get("completion_tokens", 0)))
+            hold = None
         LAST_USAGE.update({"tokens_in": _u.get("prompt_tokens", 0),
                            "tokens_out": _u.get("completion_tokens", 0),
                            "model": str(model)})
@@ -607,10 +643,21 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         headers={"x-api-key": CONFIG["anthropic_key"],
                  "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.load(r)
+    except Exception as e:
+        if hold:
+            BUDGET.release(hold); hold = None
+        _receipt({"kind": "chat_attempt", "lane": "static", "model": str(CONFIG["model"]),
+                  "paid": paid, "ok": False, "error": str(e)[:200],
+                  "ms": int((time.time() - t0) * 1000)})
+        raise
     txt = "".join(b.get("text", "") for b in data.get("content", []))
     _u = data.get("usage") or {}
+    if hold:
+        BUDGET.settle(hold, int(_u.get("input_tokens", 0)) + int(_u.get("output_tokens", 0)))
+        hold = None
     LAST_USAGE.update({"tokens_in": _u.get("input_tokens", 0),
                        "tokens_out": _u.get("output_tokens", 0),
                        "model": str(CONFIG["model"]), "lane": "static",
@@ -908,19 +955,32 @@ AUDIO_TAG = re.compile(r"\[[a-z][a-z ]{1,24}\]")
 MISSIONS = {}          # id -> dict
 RUNNING = {}           # id -> Popen
 MISSIONS_LOCK = threading.Lock()
+_RESUME = []           # mission ids to resume after restart recovery
 
 def persist_missions():
     with MISSIONS_LOCK:
-        fd, tmp = tempfile.mkstemp(dir=MISSIONS_DIR)
-        with os.fdopen(fd, "w") as f:
-            json.dump(list(MISSIONS.values()), f, indent=2)
-        os.replace(tmp, os.path.join(MISSIONS_DIR, "index.json"))
+        lfd = os.open(os.path.join(MISSIONS_DIR, ".index.lock"),
+                      os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_EX)
+            fd, tmp = tempfile.mkstemp(dir=MISSIONS_DIR)
+            with os.fdopen(fd, "w") as f:
+                json.dump(list(MISSIONS.values()), f, indent=2)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, os.path.join(MISSIONS_DIR, "index.json"))
+        finally:
+            os.close(lfd)
 
 def load_missions():
     for m in _load_json(os.path.join(MISSIONS_DIR, "index.json")) or []:
         if m.get("status") == "EN ROUTE":       # server died mid-mission
-            m["status"] = "FAILED"
-            m["debrief"] = "Server went down mid-job. Not my finest hour."
+            if os.environ.get("BARS_MISSION_RESUME") == "1":
+                m["status"] = "QUEUED"
+                m["debrief"] = "Recovered after restart; resuming."
+                _RESUME.append(m["id"])
+            else:
+                m["status"] = "FAILED"
+                m["debrief"] = "Server went down mid-job. Not my finest hour. (Set BARS_MISSION_RESUME=1 to auto-resume.)"
         m.setdefault("agent", "CASE")
         m.setdefault("kind", "OPS")
         m.setdefault("parent", None)
@@ -1472,7 +1532,25 @@ def run_internal_mission(m):
         hue.event("fail")
     persist_missions()
 
+def _mission_lock(mid):
+    """Cross-process run lock: one executor per mission, ever."""
+    os.makedirs(os.path.join(MISSIONS_DIR, "locks"), exist_ok=True)
+    fd = os.open(os.path.join(MISSIONS_DIR, "locks", mid + ".lock"),
+                 os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except OSError:
+        os.close(fd)
+        return None
+
 def run_mission(mid):
+    lock_fd = _mission_lock(mid)
+    if lock_fd is None:
+        MISSIONS[mid].update(status="FAILED", t_end=time.time(),
+                             debrief="Duplicate run blocked by mission lock.")
+        persist_missions()
+        return
     m = MISSIONS[mid]
     mdir = os.path.join(MISSIONS_DIR, mid)
     wdir = os.path.join(WORKBENCH, mid)
@@ -1794,6 +1872,38 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _login(self):
+        data = self._body()
+        tok = str(data.get("token", ""))
+        if not OPERATOR_TOKEN or not hmac.compare_digest(tok, OPERATOR_TOKEN):
+            time.sleep(0.7)                      # throttle brute force
+            self._json({"error": "auth required"}, 401); return
+        sid, csrf = SESSIONS.create()
+        tls = self.headers.get("X-Forwarded-Proto", "") == "https"
+        secflag = "; Secure" if tls else ""
+        body = json.dumps({"ok": True, "csrf": csrf}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Set-Cookie",
+                         f"bars_session={sid}; Path=/; HttpOnly; SameSite=Strict{secflag}")
+        self.send_header("Set-Cookie",
+                         f"bars_csrf={csrf}; Path=/; SameSite=Strict{secflag}")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _need_confirmation(self, action, data):
+        cid = self.headers.get("X-BARS-Confirmation", "")
+        try:
+            CONFIRMATIONS.consume(cid, action, data)
+            return True
+        except Exception as e:
+            policy = sec.ConfirmationStore.POLICIES.get(action, (0, ""))[1]
+            self._json({"error": f"confirmation required: {e}",
+                        "need_confirmation": {"action": action, "policy": policy}}, 409)
+            return False
+
     def _body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
         try:
@@ -1805,7 +1915,17 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[bars] %s\n" % (fmt % args))
 
     def do_GET(self):
+        if not self._guard():
+            return
         path = self.path.split("?")[0]
+        if path == "/api/session":
+            sid = _cookie(self.headers, "bars_session")
+            if SESSIONS.valid(sid):
+                s = SESSIONS._get(sid)
+                self._json({"ok": True, "csrf": s["csrf"]})
+            else:
+                self._json({"ok": False}, 401)
+            return
         if HANDS and path == "/api/hands":
             HANDS.handle(self, "GET", self.path, None); return
         if path == "/health":
@@ -1852,6 +1972,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Cache-Control", "no-store")
+            # generated builds run in a CSP sandbox: unique opaque origin, no
+            # access to BARS cookies/session, no top navigation
+            self.send_header("Content-Security-Policy", "sandbox allow-scripts; base-uri 'none'")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -1930,6 +2054,9 @@ class Handler(BaseHTTPRequestHandler):
                         "current_name": CONFIG.get("el_voice_name", "")})
         elif path == "/api/status":
             spend = {}
+            receipts_status = RECEIPTS.status()
+            budget_status = {"used": BUDGET.used(), "cap": BUDGET.daily_budget,
+                             "paid_enabled": os.environ.get("BARS_ALLOW_PAID") == "1"}
             sb = _spend_bridge()
             if sb:
                 try:
@@ -1938,6 +2065,8 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             self._json({"ok": True,
                         "sha": GIT_SHA or None,
+                        "receipts": receipts_status,
+                        "budget": budget_status,
                         "auth_required": bool(OPERATOR_TOKEN),
                         "data_dir": DATA,
                         "missions_engine": ("claude-cli" if find_claude() else
@@ -1966,9 +2095,23 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard():
             return
-        if not _token_ok(self.headers):
-            self._need_auth(); return
         path = self.path.split("?")[0]
+        if path == "/api/session":
+            self._login(); return
+        if path == "/api/session/logout":
+            SESSIONS.destroy(_cookie(self.headers, "bars_session"))
+            self._json({"ok": True}); return
+        if not _token_ok(self.headers, mutate=True):
+            self._need_auth(); return
+        if path == "/api/confirmations":
+            data = self._body()
+            try:
+                obj = CONFIRMATIONS.mint(str(data.get("action", "")),
+                                         data.get("payload") or {},
+                                         str(data.get("recipient", ""))[:200])
+            except Exception as e:
+                self._json({"error": str(e)[:200]}, 400); return
+            self._json(obj); return
 
         if path == "/stt":                    # binary audio body — handle before JSON parse
             n = int(self.headers.get("Content-Length", 0) or 0)
@@ -2107,6 +2250,11 @@ class Handler(BaseHTTPRequestHandler):
             img = data.get("image") or None    # screen frame riding along, if shared
             if not brief:
                 self._json({"error": "empty brief"}, 400); return
+            if not data.get("plan"):
+                sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
+                act = "squad.exec" if (sq0 or data.get("squad")) else "mission.exec"
+                if not self._need_confirmation(act, data):
+                    return
             sq = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if sq or data.get("squad"):
                 core = (sq.group(1).strip() if sq else brief) or brief
@@ -2146,6 +2294,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "unknown tool"}, 400); return
             installed = tools_installed()
             if op == "install":
+                if not self._need_confirmation("tools.write", data):
+                    return
                 cur = installed.setdefault(tid, {"env": {}})
                 for k, v in (data.get("env") or {}).items():
                     if k in TOOL_CATALOG[tid].get("env_keys", []) and str(v).strip():
@@ -2497,6 +2647,10 @@ def main():
     for d in (MISSIONS_DIR, WORKBENCH, BUILDS_DIR):
         os.makedirs(d, exist_ok=True)
     load_missions()
+    for _mid in _RESUME:                      # restart recovery (opt-in)
+        if _mid in MISSIONS:
+            MISSIONS[_mid]["status"] = "EN ROUTE"
+            threading.Thread(target=run_mission, args=(_mid,), daemon=True).start()
     init_hands()
     duplex = ThreadingHTTPServer(("127.0.0.1", DUPLEX_PORT), DuplexHandler)
     threading.Thread(target=duplex.serve_forever, daemon=True).start()
