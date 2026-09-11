@@ -1,0 +1,19 @@
+name: Vibe Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
+    with:
+      ocr_version: "1.11.8"   # exact integrity-locked package version
+    secrets:
+      llm_token: ${{ secrets.OPENROUTER_API_KEY }}

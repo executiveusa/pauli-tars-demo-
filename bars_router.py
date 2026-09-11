@@ -44,23 +44,71 @@ LANES = {
 }
 
 # Provider-native fallbacks only used when AI Gateway credentials are absent.
-# These retain the existing runtime's compatibility without pretending they are free.
-NATIVE_FALLBACKS = {
-    "flash": [
-        ("llama-3.1-8b-instant", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-        ("deepseek/deepseek-chat-v3.1", "https://openrouter.ai/api/v1", "OPEN_ROUTER_API"),
-    ],
-    "worker": [
-        ("groq/qwen3-32b", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
-        ("deepseek/deepseek-chat-v3.1", "https://openrouter.ai/api/v1", "OPEN_ROUTER_API"),
-    ],
-    "reasoner": [
-        ("deepseek/deepseek-chat-v3.1", "https://openrouter.ai/api/v1", "OPEN_ROUTER_API"),
-    ],
-    "judge": [
-        ("openrouter/nousresearch/hermes-3-llama-3.1-405b:free", "https://openrouter.ai/api/v1", "OPEN_ROUTER_API"),
-    ],
+# Model ids are verified against the provider's live /models listing whenever
+# server.py supplies it; unverified picks are marked verified=False so the
+# health surface reports truthfully instead of assuming availability.
+GROQ_BASE = os.environ.get("BARS_GROQ_BASE", "https://api.groq.com/openai/v1")
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+
+# Lane -> preferred Groq model ids, best fit first (Groq free tier = the
+# default sovereign lane). Operator overrides: BARS_FLASH_MODEL,
+# BARS_WORKER_MODEL, BARS_REASONER_MODEL, BARS_JUDGE_MODEL.
+GROQ_LANE_PREFS = {
+    "flash": ["openai/gpt-oss-20b", "groq/compound-mini", "qwen/qwen3.6-27b",
+              "openai/gpt-oss-120b"],
+    "worker": ["openai/gpt-oss-120b", "groq/compound", "qwen/qwen3.8-27b"],
+    "reasoner": ["openai/gpt-oss-120b", "groq/compound"],
+    "judge": ["openai/gpt-oss-120b", "groq/compound"],
 }
+
+OPENROUTER_LANE_PREFS = {
+    "flash": ["deepseek/deepseek-chat-v3.1"],
+    "worker": ["deepseek/deepseek-chat-v3.1"],
+    "reasoner": ["deepseek/deepseek-chat-v3.1"],
+    "judge": ["nousresearch/hermes-3-llama-3.1-405b:free"],
+}
+
+
+def _groq_env():
+    for name in ("GROQ_API_TOKEN", "GROQ_API_KEY"):
+        if os.environ.get(name):
+            return name
+    return None
+
+
+def _openrouter_env():
+    for name in ("OPEN_ROUTER_API", "OPENROUTER_API_KEY"):
+        if os.environ.get(name):
+            return name
+    return None
+
+
+def _pick(prefs, lane, available):
+    override = os.environ.get(f"BARS_{lane.upper()}_MODEL")
+    cands = ([override] if override else []) + list(prefs)
+    if available is not None:
+        for c in cands:
+            if c and c in available:
+                return c, True
+        return None, False
+    return (cands[0] if cands else None), False
+
+
+def _native_for_lane(lane, available=None):
+    env = _groq_env()
+    if env:
+        model, verified = _pick(GROQ_LANE_PREFS.get(lane, GROQ_LANE_PREFS["flash"]),
+                                lane, available)
+        if model:
+            return model, GROQ_BASE, env, verified
+        return None
+    env = _openrouter_env()
+    if env:
+        model, verified = _pick(OPENROUTER_LANE_PREFS.get(lane, OPENROUTER_LANE_PREFS["flash"]),
+                                lane, available)
+        if model:
+            return model, OPENROUTER_BASE, env, verified
+    return None
 
 DIRECT_RESPONSES = {
     "ok": "Locked.",
@@ -133,15 +181,10 @@ def _gateway_env():
     return None
 
 
-def _native_for_lane(lane):
-    for model, base_url, env_key in NATIVE_FALLBACKS.get(lane, []):
-        if os.environ.get(env_key):
-            return model, base_url, env_key
-    return None
-
-
-def route_model(message):
-    """Pick the fastest sufficient configured model; return None for static config fallback."""
+def route_model(message, available=None):
+    """Pick the fastest sufficient configured model; return None for static config fallback.
+    `available` is the provider's live model list when server.py could read it;
+    picks are then chosen from what actually exists and marked verified=True."""
     task_type, lane, max_tokens = classify_task(message)
     if lane == "direct":
         return None
@@ -159,11 +202,12 @@ def route_model(message):
             "lane": lane,
             "strength": lane_cfg["strength"],
             "routing": "vercel-ai-gateway",
+            "verified": False,
         }
 
-    native = _native_for_lane(lane)
+    native = _native_for_lane(lane, available)
     if native:
-        model, base_url, env_key = native
+        model, base_url, env_key, verified = native
         return {
             "model": model,
             "models": [],
@@ -174,11 +218,32 @@ def route_model(message):
             "lane": lane,
             "strength": lane_cfg["strength"],
             "routing": "provider-native-fallback",
+            "verified": verified,
         }
 
     # Returning None deliberately tells server.py to use its already-configured
     # provider instead of sending an unrelated provider key to AI Gateway.
     return None
+
+
+def lane_plan(available=None):
+    """Observable router state for /api/models: each lane's resolved target."""
+    plan = {}
+    gateway_env = _gateway_env()
+    for lane, cfg in LANES.items():
+        if gateway_env:
+            plan[lane] = {"model": cfg["model"], "base_url": GATEWAY_BASE,
+                          "routing": "vercel-ai-gateway", "verified": False}
+            continue
+        native = _native_for_lane(lane, available)
+        if native:
+            model, base_url, _env, verified = native
+            plan[lane] = {"model": model, "base_url": base_url,
+                          "routing": "provider-native-fallback", "verified": verified}
+        else:
+            plan[lane] = {"model": None, "base_url": None,
+                          "routing": "static-config-fallback", "verified": False}
+    return plan
 
 
 TOOL_REGISTRY = {
@@ -239,13 +304,13 @@ def get_tool_status():
     return status
 
 
-def bars_route(message, mission_context=None):
+def bars_route(message, mission_context=None, available=None):
     direct = direct_response(message)
     if direct is not None:
         return {"cached": direct, "cache_hit": True, "model": None, "tools": [], "task_type": "direct", "lane": "direct"}
 
     task_type, lane, _ = classify_task(message)
-    model_info = route_model(message)
+    model_info = route_model(message, available)
     return {
         "cached": None,
         "cache_hit": False,

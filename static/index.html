@@ -1357,14 +1357,19 @@ const EMPTY_Q=["The input's empty. You'll have to actually say something.",
  "Brief first, button second.","I can't answer silence. Type it or tap the mic."];
 function emptyNudge(){const q=EMPTY_Q[Math.floor(Math.random()*EMPTY_Q.length)];
   barsLine(q,true);say(q);$("#brief").focus();}
-function showPending(desc){$("#pendingDesc").textContent=desc;
+let pendingAction=null;
+function showPending(p){pendingAction=(p&&p.id)?p:null;
+  $("#pendingDesc").textContent=(p&&p.desc)||"";
   $("#pendingChip").classList.add("show");}
-function hidePending(){$("#pendingChip").classList.remove("show");}
+function hidePending(){pendingAction=null;$("#pendingChip").classList.remove("show");}
 async function doIt(){
-  const r=await fetch("/act",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  if(!pendingAction){hidePending();return;}
+  const r=await fetch("/act",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action_id:pendingAction.id,instruction:pendingAction.desc})});
   const j=await r.json();
   tx("BARS",j.reply||"…");barsLine(j.reply||"",true);say(j.reply);
-  if(!j.refused){hidePending();barsLaunch();poll();}
+  // label changes only after REAL execution (server started the mission)
+  if(r.ok&&!j.refused&&j.id){hidePending();barsLaunch();poll();}
 }
 async function cancelIt(){
   const r=await fetch("/cancel_act",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
@@ -1418,14 +1423,16 @@ async function ask(){
       history.push({role:"user",content:text},{role:"assistant",content:j.reply||"(action)"});
       if(history.length>16)history.splice(0,history.length-16);
       if(j.reply){tx("BARS",j.reply);barsLine(j.reply,false);}
-      if(j.deployed){announced.add(j.deployed.id);
+      if(j.deployed&&j.deployed.proposed){
+        tx("BARS","⟩ PROPOSED MISSION — awaiting your approval: "+j.deployed.brief);
+      }else if(j.deployed&&j.deployed.id){announced.add(j.deployed.id);
         tx("BARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED: "+j.deployed.brief);
         barsLaunch();}
-      if(j.pending)showPending(j.pending.desc);
+      if(j.pending)showPending(j.pending);
       if(j.takeover)offerTakeover(j.takeover);
       if(j.tool){
         await loadTools();
-        tx("BARS","⚒ "+j.tool.id+" "+j.tool.op+
+        tx("BARS","⚒ PROPOSED tool "+j.tool.op+": "+j.tool.id+" — approve to apply"+
            (j.tool.needs&&j.tool.needs.length?" — needs "+j.tool.needs.join(", "):""));
         if(j.tool.op==="added"&&((j.tool.needs&&j.tool.needs.length)||j.tool.auth==="oauth"))
           openToolsPanel(j.tool.id);
@@ -1482,7 +1489,10 @@ async function askVision(question){
                    {role:"assistant",content:j.reply||"(deployed)"});
       if(history.length>16)history.splice(0,history.length-16);
       if(j.reply){tx("BARS","🖥 "+j.reply);barsLine(j.reply,false);say(j.reply);}
-      if(j.deployed){announced.add(j.deployed.id);
+      if(j.deployed&&j.deployed.proposed){
+        tx("BARS","⟩ PROPOSED MISSION (with your screen attached) — awaiting your approval: "+
+           j.deployed.brief);
+      }else if(j.deployed&&j.deployed.id){announced.add(j.deployed.id);
         tx("BARS","⟩ "+(j.deployed.agent||"CASE")+" DEPLOYED (with your screen attached): "+
            j.deployed.brief);
         barsLaunch();poll();}

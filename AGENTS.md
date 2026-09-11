@@ -31,3 +31,17 @@ If Obscura fails due to unsupported rendering, browser API, media, authenticatio
 
 ## Brownfield Rules
 Inspect before changing. Reuse before adding. Make isolated changes, preserve rollback, and do not rewrite working BARS/Terabithia plumbing merely to adopt Obscura.
+
+<!-- VIBE_REVIEW:START -->
+## Mandatory completion review
+
+Before claiming that a coding project, feature, migration, pull request, deployment, release, or handoff is done, production-ready, ready to merge, ready to deploy, or ready to ship:
+
+1. Invoke the `vibe-project-review` skill.
+2. Run the repository's existing format, lint, type-check, test, build, security, migration, and smoke checks that apply.
+3. Run OpenCodeReview against the relevant workspace, branch, commit, or full repository.
+4. Do not claim completion while a critical finding remains or a high finding lacks an evidence-backed disposition.
+5. Record proof, risks, rollback, commercial impact, and the exact human approval still required.
+
+Automated review supplements independent approval; a builder and its agent may not approve their own work.
+<!-- VIBE_REVIEW:END -->
