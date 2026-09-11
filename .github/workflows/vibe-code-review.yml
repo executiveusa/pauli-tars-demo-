@@ -23,5 +23,7 @@ jobs:
                                          # non-reasoning: hidden-thinking free models stalled
                                          # the 30-min review job; the gpt-5.3-codex default
                                          # drained the account
+      review_concurrency: "1"   # free-tier upstream 429s under parallel fan-out;
+                                # serial review keeps the burst under the shared cap
     secrets:
       llm_token: ${{ secrets.OPENROUTER_API_KEY }}
