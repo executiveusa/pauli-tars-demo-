@@ -19,5 +19,7 @@ jobs:
     uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
+      model: nex-agi/nex-n2.5-pro:free   # verified free at runtime (cost $0, no top-up);
+                                         # the gpt-5.3-codex default drained the account
     secrets:
       llm_token: ${{ secrets.OPENROUTER_API_KEY }}
