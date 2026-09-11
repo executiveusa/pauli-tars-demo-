@@ -86,3 +86,20 @@ default rollback.
 - Paid model routes are fail-closed: they only run with `BARS_ALLOW_PAID=1`
   AND under `BARS_PAID_TOKEN_BUDGET` per day. Default: free Groq lanes only.
 - Routing receipts: `/data/receipts.jsonl` (lane, model, tokens, ms, paid).
+
+## Receipt anchor trust domain (security limitation)
+
+The receipt ledger's rotation checkpoint anchor (`receipts.jsonl.anchor`) is
+HMAC-protected: on read, the stored `seq/prev` must match an HMAC computed
+from the same key as the chain itself. A corrupt or forged anchor, an anchor
+missing for a non-empty ledger, or an anchor ahead of the chain state all put
+the ledger in fail-closed mode: appends are refused and the finding is
+surfaced on startup.
+
+Limitation: by default the anchor lives inside the writable data domain
+(`/opt/bars/data`), so an attacker with full data-write access could in
+principle recompute the anchor if they also know the key (which they must
+not, since the key comes from the env). To remove the anchor from the
+writable data domain entirely, set `BARS_RECEIPT_ANCHOR_PATH` in the
+environment (e.g. `/etc/bars/receipt.anchor` on a read-only-mounted file) so
+the anchor file is stored outside `/data`. The HMAC check runs either way.

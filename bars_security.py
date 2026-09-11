@@ -233,7 +233,10 @@ class ReceiptLedger:
         self.path = path
         self._lock = threading.Lock()
         self._lock_path = path + ".lock"
-        self._anchor_path = path + ".anchor"
+        # the anchor may live OUTSIDE the writable data domain (recommended in
+        # production): an attacker with data-write then cannot recompute it.
+        self._anchor_path = os.environ.get("BARS_RECEIPT_ANCHOR_PATH") or path + ".anchor"
+        self._broken = False
         self.write_failures = 0
         self.last_error = None
         self._key = self._load_key(key_path)
@@ -260,13 +263,34 @@ class ReceiptLedger:
             self.write_failures += 1
             self.startup_findings.append(
                 f"anchor seq {anchor['seq']} ahead of state seq {self._seq}: truncation suspected")
+        ledger_exists = os.path.exists(self.path) and os.path.getsize(self.path) > 0
+        if ledger_exists and anchor is None and not self._broken and os.path.exists(self._state_path):
+            self.startup_findings.append("anchor missing for non-empty ledger: fail-closed")
+            self._broken = True
+        if self._broken:
+            self.write_failures += 1
+            if not self.last_error:
+                self.last_error = "receipt integrity failure at startup (fail-closed)"
 
     def _read_anchor(self):
+        """Anchor is verified against its HMAC; corrupt anchors are findings,
+        never silently trusted."""
         try:
             with open(self._anchor_path) as f:
-                return json.load(f)
-        except Exception:
+                a = json.load(f)
+        except FileNotFoundError:
             return None
+        except Exception as e:
+            self.startup_findings.append(f"anchor unreadable: {e}")
+            self._broken = True
+            return None
+        body = json.dumps({"seq": a.get("seq"), "prev": a.get("prev")}, sort_keys=True)
+        want = hmac.new(self._key, body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(want, str(a.get("_h", ""))):
+            self.startup_findings.append("anchor HMAC invalid: anchor forgery or key rotation")
+            self._broken = True
+            return None
+        return a
 
     def _write_anchor(self):
         """Protected external anchor: the chain tip, HMACed with the ledger key,
@@ -343,10 +367,21 @@ class ReceiptLedger:
     def append(self, ev):
         ev = dict(ev)
         ev.setdefault("ts", time.time())
+        if self._broken:
+            self.write_failures += 1
+            self.last_error = "receipt ledger fail-closed (startup integrity failure)"
+            return
         try:
             with self._lock:
                 lfd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
                 fcntl.flock(lfd, fcntl.LOCK_EX)   # cross-process writers
+                # reload chain state UNDER the lock: a second process may have
+                # appended since this one initialized
+                st = self._load_state()
+                if isinstance(st.get("seq"), int):
+                    self._seq = max(self._seq, st["seq"])
+                if st.get("prev"):
+                    self._prev = st["prev"]
                 # rotate FIRST: the checkpoint anchors the previous chain tip,
                 # then this event chains from the checkpoint under one lock
                 if os.path.exists(self.path) and os.path.getsize(self.path) > self.MAX_BYTES:

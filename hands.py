@@ -525,8 +525,7 @@ def handle(handler, method, raw_path, payload):
         if not task:
             handler._json({"error": "unknown confirm_id - request the task first"}, 400)
             return True
-        if not handler._need_confirmation("hands.exec", {"task": task},
-                                          recipient="/hands_go"):
+        if not handler._need_confirmation("hands.exec", p, recipient="/hands_go"):
             PENDING[cid] = task     # put it back; approval can still happen
             return True
         if RUN["active"]:

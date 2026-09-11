@@ -63,13 +63,9 @@ s,h,b = req("POST","/chat", {}, {"Origin":"https://evil.example","Authorization"
 s,h,b = req("OPTIONS","/chat", headers={"Origin":"https://barsdemo.netlify.app"}); check("preflight allowed origin", s==204 and h.get("Access-Control-Allow-Origin")=="https://barsdemo.netlify.app")
 s,h,b = req("POST","/chat", headers={"Origin":"https://barsdemo.netlify.app","Authorization":"Bearer testtok123","content-type":"application/json"}, body={"text":"ok"}); check("ACAO on response", h.get("Access-Control-Allow-Origin")=="https://barsdemo.netlify.app")
 def chat(text, headers=None):
-    hh = dict(headers or TOK)
-    s,h,cj = req("POST","/api/confirmations", {"action":"chat.exec","payload":{"text":text},"recipient":"/chat"}, headers=TOK)
-    assert s==200 and cj.get("id"), f"mint failed: {s} {cj}"
-    hh["X-BARS-Confirmation"] = cj["id"]
-    return req("POST","/chat", body={"text":text}, headers=hh)
+    return req("POST","/chat", body={"text":text}, headers=(headers or TOK))
 
-s,h,b = req("POST","/chat", body={"text":"ok"}, headers=TOK); check("chat without confirmation 409", s==409 and b.get("need_confirmation",{}).get("action")=="chat.exec", str(b)[:140])
+s,h,b = req("POST","/chat", body={"text":"ok"}, headers=TOK); check("chat needs no approval (UX policy)", s==200 and b.get("reply"), str(b)[:140])
 s,h,b = chat("ok"); check("direct lane cached", s==200 and b.get("reply")=="Locked.", str(b))
 s,h,b = chat("what's the weather like today?")
 check("flash lane routed", s==200 and b.get("lane")=="flash" and b.get("model")=="openai/gpt-oss-20b" and "MOCK-REPLY" in str(b.get("reply")), str(b)[:160])

@@ -103,21 +103,22 @@ for i in range(6):
     codes.append(s)
 check("adv-v3-9 login lockout after 5 failures (XFF honored)", codes[-1] == 429, str(codes))
 
-# adv-v3-10: /chat confirmation gate with full metadata
+# adv-v3-10: UX policy - ordinary chat needs NO approval (conversational inference)
 TOK = {"Authorization": "Bearer v3tok"}
 s, h, b = req("POST", "/chat", {"text": "hello there"}, TOK)
-nc = b.get("need_confirmation", {})
-check("adv-v3-10 chat gated w/ action+cost+recipient+ttl",
-      s == 409 and nc.get("action") == "chat.exec" and nc.get("cost_bound") == 4096
-      and nc.get("recipient") == "/chat" and nc.get("ttl_seconds") == 180, str(nc))
-s, h, cj = req("POST", "/api/confirmations", {"action": "chat.exec", "payload": {"text": "hello there"}, "recipient": "/chat"}, TOK)
-H = dict(TOK); H["X-BARS-Confirmation"] = cj.get("id", "")
-s, h, b = req("POST", "/chat", {"text": "hello there"}, H)
-check("adv-v3-11 chat executes with valid confirmation", s == 200 and b.get("reply"), str(b.get("reply"))[:60])
+check("adv-v3-10 chat ungated by policy", s == 200 and b.get("reply"), str(b.get("reply"))[:60])
+# but a follow-up MISSION the chat proposes still needs its own confirmation
+s, h, b = req("POST", "/followup", {"mission": "m1"}, TOK)
+check("adv-v3-10b followup gated as mission.exec", s == 409 and b.get("need_confirmation", {}).get("action") == "mission.exec", str(b.get("need_confirmation")))
 
-# adv-v3-12: plan dry-run has separate mission.plan semantics
+s, h, b = req("POST", "/chat", {"text": "hello there"}, TOK)
+check("adv-v3-11 chat executes without confirmation", s == 200 and b.get("reply"), str(b.get("reply"))[:60])
+
+# adv-v3-12: plan dry-run: squad uses mission.plan; non-squad plan never executes
 s, h, b = req("POST", "/brief", {"brief": "squad: research y", "plan": True}, TOK)
-check("adv-v3-12 plan uses mission.plan action", s == 409 and b.get("need_confirmation", {}).get("action") == "mission.plan", str(b.get("need_confirmation")))
+check("adv-v3-12 squad plan uses mission.plan action", s == 409 and b.get("need_confirmation", {}).get("action") == "mission.plan", str(b.get("need_confirmation")))
+s, h, b = req("POST", "/brief", {"brief": "research y solo", "plan": True}, TOK)
+check("adv-v3-12b non-squad plan is 400, never executes", s == 400 and "only meaningful for squad" in str(b.get("error","")), str(b))
 
 # adv-v3-13: mission id validation
 s, h, b = req("GET", "/mission/zzzz", headers=TOK)

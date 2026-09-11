@@ -1,8 +1,9 @@
 #!/bin/sh
 # BARS sovereign runtime - full versioned test ledger (local, mock provider, no paid calls)
 set -e
+rm -rf /tmp/barsdata2 /tmp/adv-data /tmp/v3-data /tmp/v4-* /tmp/adv-deploy 2>/dev/null || true
 cd "$(dirname "$0")/.."
-for t in test_bars test_security test_paid test_adversarial test_fourth; do
+for t in test_bars test_security test_paid test_adversarial test_fourth test_fifth; do
   echo "===== tests/$t.py ====="
   python3 "tests/$t.py"
 done

@@ -177,23 +177,24 @@ shutil.copy(os.path.join(ROOT, "docker-compose.yml"), SB + "/root/app/docker-com
 stub = '''#!/bin/bash
 echo "$(basename $0) $@" >> ''' + SB + '''/calls.log
 if [ "$(basename $0)" = "docker" ] && [ "$1" = "image" ]; then exit 0; fi
-if [ "$(basename $0)" = "curl" ]; then exit 0; fi
+if [ "$(basename $0)" = "git" ] && [ "$1" = "rev-parse" ]; then echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; exit 0; fi
+if [ "$(basename $0)" = "curl" ]; then echo "{\"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0; fi
 exit 0
 '''
 for t in ("docker", "curl", "git", "tar"):
     open(SB + "/bin/" + t, "w").write(stub)
     os.chmod(SB + "/bin/" + t, 0o755)
 env = dict(os.environ, PATH=SB + "/bin:/usr/bin:/bin", BARS_ROOT=SB + "/root")
-p = subprocess.run(["sh", SB + "/root/app/deploy.sh", "abc123"], env=env, capture_output=True, text=True)
+p = subprocess.run(["sh", SB + "/root/app/deploy.sh", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], env=env, capture_output=True, text=True)
 calls = open(SB + "/calls.log").read()
-check("adv-v2-DR1 deploy builds exact sha image", "docker build" in calls and "bars-sovereign:abc123" in calls)
-check("adv-v2-DR2 deploy records current sha", open(SB + "/root/current.sha").read().strip() == "abc123")
+check("adv-v2-DR1 deploy builds exact sha image", "docker build" in calls and "bars-sovereign:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in calls)
+check("adv-v2-DR2 deploy records current sha", open(SB + "/root/current.sha").read().strip() == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 check("adv-v2-DR3 deploy preserves previous sha", os.path.exists(SB + "/root/previous.sha") or True)  # first deploy: none
 os.remove(SB + "/calls.log")
 p = subprocess.run(["sh", SB + "/root/app/rollback.sh"], env=env, capture_output=True, text=True)
 calls = open(SB + "/calls.log").read()
 check("adv-v2-DR4 default rollback does NOT touch data", "tar -x" not in calls and open(SB + "/root/data/marker.txt").read() == "live-data")
-check("adv-v2-DR5 rollback records abandoned sha", open(SB + "/root/rolled-back-from.sha").read().strip() == "abc123")
+check("adv-v2-DR5 rollback records abandoned sha", open(SB + "/root/rolled-back-from.sha").read().strip() == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 check("adv-v2-DR6 rollback swaps image via compose", "compose" in calls and "bars-sovereign:rollback" in calls)
 
 print(f"\n== {len(passed)} passed, {len(failed)} failed ==")

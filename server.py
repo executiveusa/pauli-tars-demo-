@@ -183,13 +183,35 @@ def _apply_env_overrides(cfg):
 
 CONFIG = _apply_env_overrides(load_config())
 from urllib.parse import urlparse as _urlparse
-_KEY_HOSTS = {}   # api key -> the exact hostname it may be sent to (static path)
-if CONFIG["anthropic_key"] and (CONFIG.get("base_url") or "").strip():
-    _KEY_HOSTS[CONFIG["anthropic_key"]] = (_urlparse(CONFIG["base_url"]).hostname or "").lower()
+_KEY_HOSTS = {}   # api key -> the exact hostname it may ever be sent to
+if CONFIG["anthropic_key"]:
+    if (CONFIG.get("base_url") or "").strip():
+        _KEY_HOSTS[CONFIG["anthropic_key"]] = (_urlparse(CONFIG["base_url"]).hostname or "").lower()
+    else:
+        _KEY_HOSTS[CONFIG["anthropic_key"]] = "api.anthropic.com"   # native key, native host only
 if CONFIG.get("openai_key"):
     _KEY_HOSTS[CONFIG["openai_key"]] = "api.openai.com"
 if CONFIG.get("el_key"):
     _KEY_HOSTS[CONFIG["el_key"]] = "api.elevenlabs.io"
+for _env, _defhost in (("GROQ_API_TOKEN", "api.groq.com"), ("GROQ_API_KEY", "api.groq.com"),
+                       ("OPEN_ROUTER_API", "openrouter.ai"), ("OPENROUTER_API_KEY", "openrouter.ai"),
+                       ("AI_GATEWAY_API_KEY", "ai-gateway.vercel.sh")):
+    _v = os.environ.get(_env)
+    if _v:
+        _b = os.environ.get("BARS_GROQ_BASE" if "GROQ" in _env else "BARS_BASE_URL", "")
+        _KEY_HOSTS[_v] = (_urlparse(_b).hostname if _b else _defhost).lower()
+
+def _enforce_key_host(api_key, base):
+    """Fail CLOSED before a request is constructed: a provider key may only
+    leave for its bound hostname. Called for EVERY attempt, including after
+    fallback substitutions swap key/base."""
+    if not api_key or not base:
+        return
+    h = (_urlparse(base if "://" in base else "https://" + base).hostname or "").lower()
+    bound = _KEY_HOSTS.get(api_key)
+    if bound and h and h != bound:
+        raise RuntimeError(
+            f"key-host binding: refusing to send a provider key to {h} (bound to {bound}).")
 hue.init(CONFIG["hue"], ROOT)
 
 def duplex_token():
@@ -464,32 +486,38 @@ def _token_ok(headers, mutate=False):
 AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"function ck(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):''}"
     b"function sameOrigin(u){try{return new URL(u,location.href).origin===location.origin}catch(e){return false}}"
-    b"function approve(need,retry){"
-    b"var d=document.createElement('div');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:monospace';"
-    b"var c=document.createElement('div');c.style.cssText='background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:440px;border-radius:8px';"
-    b"var t=document.createElement('div');"
-    b"var brief='';try{var pb=JSON.parse(document.getElementById('__bars_pending_payload')?document.getElementById('__bars_pending_payload').textContent:'{}');brief=JSON.stringify(pb).slice(0,300)}catch(e){}"
-    b"t.innerHTML='<b style=\\'color:#f59e0b\\'>BARS - HUMAN APPROVAL REQUIRED</b><br><br>'+"
-    b"'<table style=\\'font-size:12px;line-height:1.5\\'>'+"
-    b"'<tr><td align=right><b>Action</b></td><td>'+(need.action||'')+'</td></tr>'+"
-    b"'<tr><td align=right><b>Policy</b></td><td>'+(need.policy||'')+'</td></tr>'+"
-    b"'<tr><td align=right><b>Target</b></td><td>'+(need.recipient||'')+'</td></tr>'+"
-    b"'<tr><td align=right><b>Cost bound</b></td><td>&le; '+(need.cost_bound||0)+' tokens</td></tr>'+"
-    b"'<tr><td align=right><b>Expires</b></td><td>'+(need.ttl_seconds||0)+'s after approval</td></tr>'+"
-    b"'<tr><td align=right valign=top><b>Payload</b></td><td><code style=\\'word-break:break-all\\'>'+brief+'</code></td></tr></table><br>This runs only on your explicit approval.';"
-    b"var okb=document.createElement('button');okb.textContent='APPROVE + RUN';okb.style.cssText='background:#f59e0b;color:#000;padding:8px 14px;margin:14px 10px 0 0;cursor:pointer;border:0;border-radius:4px;font-weight:bold';"
-    b"var nob=document.createElement('button');nob.textContent='DENY';nob.style.cssText='background:#333;color:#eee;padding:8px 14px;margin-top:14px;cursor:pointer;border:1px solid #666;border-radius:4px';"
+    b"function el(t,txt,style){var d=document.createElement(t);if(txt!=null)d.textContent=txt;if(style)d.style.cssText=style;return d}"
+    b"function approve(need,payloadText,retry){"
+    # modal: every field rendered text-safe via textContent, full payload, per-request
+    b"var d=el('div',null,'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:monospace');"
+    b"var c=el('div',null,'background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:520px;border-radius:8px;max-height:80vh;overflow:auto');"
+    b"c.appendChild(el('b','BARS - HUMAN APPROVAL REQUIRED','color:#f59e0b'));"
+    b"var tb=el('table',null,'font-size:12px;line-height:1.6;margin-top:12px');"
+    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Cost bound','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']."
+    b"forEach(function(r){var tr=el('tr');var k=el('td',r[0],null);k.style.fontWeight='bold';k.style.textAlign='right';k.style.paddingRight='8px';"
+    b"tr.appendChild(k);tr.appendChild(el('td',r[1]||''));tb.appendChild(tr)});c.appendChild(tb);"
+    b"c.appendChild(el('div','Exact payload:','font-weight:bold;margin-top:10px'));"
+    b"c.appendChild(el('pre',payloadText,'background:#000;border:1px solid #333;padding:8px;max-height:200px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all'));"
+    b"var okb=el('button','APPROVE + RUN','background:#f59e0b;color:#000;padding:8px 14px;margin:14px 10px 0 0;cursor:pointer;border:0;border-radius:4px;font-weight:bold');"
+    b"var nob=el('button','DENY','background:#333;color:#eee;padding:8px 14px;margin-top:14px;cursor:pointer;border:1px solid #666;border-radius:4px');"
     b"nob.onclick=function(){d.remove()};"
-    b"okb.onclick=function(){okb.disabled=true;okb.textContent='RUNNING...';"
-    b"retry().finally(function(){d.remove()})};"
-    b"c.appendChild(t);c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d)}"
+    b"okb.onclick=function(){okb.disabled=true;okb.textContent='RUNNING...';retry().finally(function(){d.remove()})};"
+    b"c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d)}"
+    b"function mintAndRun(action,payload,recipient,exec){"
+    b"return of('/api/confirmations',{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':ck('bars_csrf')},"
+    b"body:JSON.stringify({action:action,payload:payload,recipient:recipient})})"
+    b".then(function(c){return c.json()}).then(function(cj){"
+    b"if(!cj||!cj.id)return Promise.resolve(null);"
+    b"var h2=new Headers(exec.h||{});h2.set('X-BARS-Confirmation',cj.id);"
+    b"return of(exec.u,{method:exec.m,headers:h2,body:exec.b})})}"
     b"var of=window.fetch.bind(window);"
     b"window.fetch=function(u,o){o=o||{};var url=(typeof u==='string')?u:(u&&u.url)||'';"
     b"var same=sameOrigin(url);"
     b"var p=new URL(url,location.href).pathname;"
     b"var h=new Headers(o.headers||{});var m=(o.method||'GET').toUpperCase();"
     b"if(same&&m!=='GET'){var c=ck('bars_csrf');if(c)h.set('X-CSRF-Token',c);}o.headers=h;"
-    b"if(o.body){var st=document.getElementById('__bars_pending_payload');if(!st){st=document.createElement('script');st.type='application/json';st.id='__bars_pending_payload';document.documentElement.appendChild(st)}st.textContent=o.body}"
+    b"var bodyText=(typeof o.body==='string')?o.body:'';"   # per-request immutable payload
+    b"var payloadObj={};try{payloadObj=JSON.parse(bodyText||'{}')}catch(e){}"
     b"var exec=function(){return of(u,o)};"
     b"return exec().then(function(r){"
     b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'){"
@@ -499,13 +527,19 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"return r}"
     b"if(r.status===409&&same){return r.clone().json().then(function(j){"
     b"if(j&&j.need_confirmation){return new Promise(function(resolve){"
-    b"approve(j.need_confirmation,function(){"
-    b"return of('/api/confirmations',{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':ck('bars_csrf')},"
-    b"body:JSON.stringify({action:j.need_confirmation.action,payload:(function(){try{return JSON.parse(o.body||'{}')}catch(e){return{}}})(),recipient:p})})"
-    b".then(function(c){return c.json()}).then(function(cj){"
-    b"if(cj&&cj.id){var h2=new Headers(o.headers||{});h2.set('X-BARS-Confirmation',cj.id);o.headers=h2;}"
-    b"resolve(exec())}).catch(function(){resolve(r)})})})}"
-    b"return r})}return r})}})();</script>")
+    b"approve(j.need_confirmation,bodyText,function(){"
+    b"return mintAndRun(j.need_confirmation.action,payloadObj,p,{u:url,m:m,h:h,b:o.body})"
+    b".then(function(r2){resolve(r2||r)})})})}"
+    b"return r})}"
+    b"if(r.ok&&same&&p==='/chat'){return r.clone().json().then(function(j){"
+    # generated mission: separate displayed confirmation, full payload shown
+    b"if(j&&j.deployed&&j.deployed.proposed){return new Promise(function(resolve){"
+    b"approve({action:'mission.exec',policy:'run a mission (spends model tokens)',recipient:'/brief',cost_bound:8192,ttl_seconds:120},"
+    b"JSON.stringify({brief:j.deployed.brief},null,2),function(){"
+    b"return mintAndRun('mission.exec',{brief:j.deployed.brief},'/brief',{u:'/brief',m:'POST',h:{'content-type':'application/json'},b:JSON.stringify({brief:j.deployed.brief})})"
+    b".then(function(){resolve(r)})})})}"
+    b"return r}).catch(function(){return r})}"
+    b"return r})}})();</script>")
 
 def _inject_auth_shim(body):
     idx = body.lower().find(b"</head>")
@@ -583,14 +617,7 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     base = (routed_base or CONFIG.get("base_url") or "").strip().rstrip("/")
     model = routed_model or CONFIG["model"]
     api_key = routed_key or CONFIG["anthropic_key"]
-    if not routed_key and api_key and base:
-        _h = (_urlparse(base if "://" in base else "https://" + base).hostname or "").lower()
-        _bound = _KEY_HOSTS.get(api_key)
-        if _bound and _h and _h != _bound:
-            raise RuntimeError(
-                f"key-host binding: refusing to send the static provider key to "
-                f"{_h} (bound to {_bound}). Pick a model on the bound host or "
-                "configure a key for this host.")
+    _enforce_key_host(api_key, base)
     use_or = bool(base) or ("/" in str(model) and not str(model).startswith("claude"))
     max_tokens = min(max_tokens, int(os.environ.get("BARS_MAX_TOKENS_CAP", "4096")))
     _host = (base or "https://openrouter.ai/api/v1") if use_or else "https://api.anthropic.com"
@@ -638,6 +665,16 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                     "max_tokens": max_tokens,
                     "messages": oai_msgs, "stream": False}).encode()
                 fhost = base or "https://openrouter.ai/api/v1"
+                try:
+                    _enforce_key_host(api_key, fhost)
+                except RuntimeError as kb:
+                    # never leak a native key to OpenRouter on provider failure:
+                    # receipt the refusal and surface the ORIGINAL failure
+                    _receipt({"kind": "chat_attempt", "lane": "static-fallback",
+                              "model": str(model), "paid": _paid_route(fhost),
+                              "ok": False, "refused": "key-host-binding",
+                              "error": str(kb)[:200], "ms": 0})
+                    raise RuntimeError(f"{e} (fallback refused: {kb})")
                 if _paid_route(fhost):
                     hold = _paid_gate(str(model), est_in + max_tokens)
                 t0 = time.time()
@@ -666,7 +703,12 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         _u = data.get("usage") or {}
         if hold:
-            BUDGET.settle(hold, int(_u.get("prompt_tokens", 0)) + int(_u.get("completion_tokens", 0)))
+            try:
+                _actual = int(_u["prompt_tokens"]) + int(_u["completion_tokens"])
+                assert _actual >= 0
+            except Exception:
+                _actual = est_in + max_tokens   # missing/invalid usage: settle at estimate
+            BUDGET.settle(hold, _actual)
             hold = None
         LAST_USAGE.update({"tokens_in": _u.get("prompt_tokens", 0),
                            "tokens_out": _u.get("completion_tokens", 0),
@@ -714,7 +756,12 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     txt = "".join(b.get("text", "") for b in data.get("content", []))
     _u = data.get("usage") or {}
     if hold:
-        BUDGET.settle(hold, int(_u.get("input_tokens", 0)) + int(_u.get("output_tokens", 0)))
+        try:
+            _actual = int(_u["input_tokens"]) + int(_u["output_tokens"])
+            assert _actual >= 0
+        except Exception:
+            _actual = est_in + max_tokens       # missing/invalid usage: settle at estimate
+        BUDGET.settle(hold, _actual)
         hold = None
     LAST_USAGE.update({"tokens_in": _u.get("input_tokens", 0),
                        "tokens_out": _u.get("output_tokens", 0),
@@ -1570,7 +1617,10 @@ def run_internal_mission(m):
             [{"role": "user", "content": worker_prompt}],
             max_tokens=1800, user_message=m["brief"])
         if m.get("_abort"):
-            return                      # /abort fired mid-call; status already set
+            m.update(status="ABORTED", t_end=time.time(),
+                     debrief="Job aborted on your order.")
+            persist_missions()
+            return
         if not report.strip():
             raise RuntimeError("empty report from provider")
         _event(m, "sys", "Report written.")
@@ -1956,22 +2006,31 @@ class Handler(BaseHTTPRequestHandler):
     LOGIN_LOCK = threading.Lock()
 
     def _throttle_auth_fail(self):
-        """Bearer/session failures get the same per-IP backoff as logins."""
+        """Bearer/session failures: per-IP backoff, hard lockout past 8. Returns
+        True when the request must be answered 429."""
         ip = self._client_ip()
+        now = time.time()
         with self.LOGIN_LOCK:
             rec = self.LOGIN_FAILS.setdefault(ip, {"n": 0, "t": 0.0})
+            if now - rec["t"] > 900:
+                rec["n"] = 0
             rec["n"] += 1
-            rec["t"] = time.time()
+            rec["t"] = now
             n = rec["n"]
+        if n > 8:
+            return True
         if n > 3:
             time.sleep(min(0.5 * (2 ** min(n - 3, 4)), 8))
+        return False
 
     def _client_ip(self):
-        # behind Caddy the peer is loopback; the first XFF hop is the client
-        xff = self.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()[:64]
-        return self.client_address[0] if self.client_address else "?"
+        # trust XFF only when the immediate peer is the loopback reverse proxy
+        peer = self.client_address[0] if self.client_address else ""
+        if peer in ("127.0.0.1", "::1"):
+            xff = self.headers.get("X-Forwarded-For", "")
+            if xff:
+                return xff.split(",")[0].strip()[:64]
+        return peer or "?"
 
     def _login(self):
         ip = self._client_ip()
@@ -2055,8 +2114,11 @@ class Handler(BaseHTTPRequestHandler):
         if not public and not _token_ok(self.headers):
             if path == "/api/status":
                 self._json(_public_status()); return   # sanitized anonymous status
-            self._throttle_auth_fail()
-            self._need_auth(); return
+            if self._throttle_auth_fail():
+                self._json({"error": "rate limited", "retry_after": 60}, 429)
+            else:
+                self._need_auth()
+            return
         if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html"):
             # the visual BARS cockpit is the primary interface at / and /agent/;
             # the newer front-door experience stays available at /frontdoor/.
@@ -2227,8 +2289,11 @@ class Handler(BaseHTTPRequestHandler):
             SESSIONS.destroy(_cookie(self.headers, "bars_session"))
             self._json({"ok": True}); return
         if not _token_ok(self.headers, mutate=True):
-            self._throttle_auth_fail()
-            self._need_auth(); return
+            if self._throttle_auth_fail():
+                self._json({"error": "rate limited", "retry_after": 60}, 429)
+            else:
+                self._need_auth()
+            return
         if path == "/api/confirmations":
             data = self._body()
             try:
@@ -2261,8 +2326,9 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()[:4000]
             if not text:
                 self._json({"error": "empty"}, 400); return
-            if not self._need_confirmation("chat.exec", data, recipient="/chat"):
-                return
+            # ordinary chat is conversational inference: no approval. Any
+            # mission/tool/action the reply GENERATES is proposed, not run -
+            # each gets its own displayed confirmation.
             history = data.get("history") or []
             msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
                     for h in history[-8:] if h.get("role") in ("user", "assistant")]
@@ -2349,10 +2415,11 @@ class Handler(BaseHTTPRequestHandler):
                     brief = re.sub(r"\s+", " ", dep.group(1)).strip()[:4000]
                     reply = reply[:dep.start()].strip()
                     if brief:
+                        # never auto-launch: propose the mission; the human
+                        # approves it via its own mission.exec confirmation
                         nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", reply)
-                        mid = start_mission(brief, agent=nm.group(1) if nm else None)
-                        deployed = {"id": mid, "brief": brief,
-                                    "agent": MISSIONS[mid]["agent"]}
+                        deployed = {"proposed": True, "brief": brief,
+                                    "agent": nm.group(1) if nm else None}
                 self._json({
                     "reply": reply.strip(),
                     "deployed": deployed,
@@ -2379,6 +2446,9 @@ class Handler(BaseHTTPRequestHandler):
             if not brief:
                 self._json({"error": "empty brief"}, 400); return
             sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
+            if data.get("plan") and not (sq0 or data.get("squad")):
+                self._json({"error": "plan dry-run is only meaningful for squad briefs; "
+                                     "nothing was executed"}, 400); return
             if data.get("plan"):
                 act = "mission.plan"
             else:
@@ -2411,8 +2481,9 @@ class Handler(BaseHTTPRequestHandler):
             proc = RUNNING.get(mid)
             if m and m["status"] == "EN ROUTE":
                 m["_abort"] = True                       # internal worker checks this
-                m.update(status="ABORTED", t_end=time.time(),
-                         debrief="Job aborted on your order.")
+                m.update(status="ABORTING",
+                         debrief="Abort requested; cancelling after the in-flight "
+                                 "model call returns (accounting continues).")
                 if proc:
                     try: proc.kill()
                     except Exception: pass
@@ -2470,8 +2541,7 @@ class Handler(BaseHTTPRequestHandler):
             mm = re.match(r"^data:(image/(?:png|jpeg|webp));base64,(.+)$", img, re.S)
             if not mm:
                 self._json({"error": "bad image"}, 400); return
-            if not self._need_confirmation("chat.see", data, recipient="/see"):
-                return
+            # screen analysis is conversational inference: no approval needed
             q = (data.get("question") or
                  "This is the Commander's screen right now. Tell him what you see and give your "
                  "blunt take — what's good, what's off, what you'd fix first.")
@@ -2681,7 +2751,7 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/followup":
             mid = data.get("id", "")
-            if not self._need_confirmation("chat.followup", data, recipient="/followup"):
+            if not self._need_confirmation("mission.exec", data, recipient="/followup"):
                 return
             m = MISSIONS.get(mid)
             if not m or not m.get("follow_up"):
@@ -2740,18 +2810,43 @@ class DuplexHandler(BaseHTTPRequestHandler):
         else:
             self._deny(404)
 
+    DUPLEX_MAX_BODY = 1_000_000
+    DUPLEX_RL = {}
+    DUPLEX_RL_LOCK = threading.Lock()
+
+    def _duplex_rate_ok(self):
+        ip = self.client_address[0] if self.client_address else "?"
+        now = time.time()
+        with self.DUPLEX_RL_LOCK:
+            calls = [t for t in self.DUPLEX_RL.get(ip, []) if now - t < 60]
+            if len(calls) >= 30:
+                self.DUPLEX_RL[ip] = calls
+                return False
+            calls.append(now)
+            self.DUPLEX_RL[ip] = calls
+            return True
+
     def do_POST(self):
         if self.path.split("?")[0] != "/v1/chat/completions":
             self._deny(404); return
         auth = self.headers.get("Authorization", "")
         if not hmac.compare_digest(auth, f"Bearer {DUPLEX_TOKEN}"):
             self._deny(); return
+        if not self._duplex_rate_ok():
+            self._deny(429); return
         try:
             n = int(self.headers.get("Content-Length", 0) or 0)
+            if n > self.DUPLEX_MAX_BODY:
+                self._deny(413); return
             try:
                 data = json.loads(self.rfile.read(n) or b"{}")
                 if not isinstance(data, dict):
                     raise ValueError("body must be a JSON object")
+                _msgs = data.get("messages")
+                if _msgs is not None and not (
+                        isinstance(_msgs, list)
+                        and all(isinstance(m, dict) and "role" in m for m in _msgs)):
+                    raise ValueError("messages must be a list of role/content objects")
             except Exception:
                 self._deny(400); return
             msgs = []
