@@ -8,26 +8,42 @@ Standalone. Never touches brain-studio (Jarvis) or mission-control.
 Brief a mission → BARS executes it headless (draft-safe `claude -p`)
 → smooth spoken debrief when you return. Flavor and authenticity are dials.
 """
-import base64, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error, uuid
+import base64, json, os, re, shutil, signal, socket, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 import hue
-try:
-    import hands as HANDS       # real-Mac takeover bay (soft — server runs without pyobjc)
-except Exception:
-    HANDS = None
+if os.environ.get("BARS_DISABLE_HANDS") == "1":
+    HANDS = None                # sovereign/headless deployments: no machine control
+else:
+    try:
+        import hands as HANDS   # real-Mac takeover bay (soft — server runs without pyobjc)
+    except Exception:
+        HANDS = None
 
 STATIC = os.path.join(ROOT, "static")
-MISSIONS_DIR = os.path.join(ROOT, "missions")
-WORKBENCH = os.path.join(ROOT, "workbench")
-STATE_PATH = os.path.join(ROOT, "bars-state.json")
-MEMORY_PATH = os.path.join(ROOT, "bars-memory.md")
-DUPLEX_PATH = os.path.join(ROOT, "bars-duplex.json")
+# Durable state lives in BARS_DATA_DIR (default: repo root for local runs; a
+# mounted volume such as /data in the sovereign container) so container
+# rebuilds never touch memory, missions, dials, tools, receipts, or the
+# duplex token.
+DATA = os.environ.get("BARS_DATA_DIR", ROOT)
+try:
+    os.makedirs(DATA, exist_ok=True)
+except Exception:
+    DATA = ROOT
+MISSIONS_DIR = os.path.join(DATA, "missions")
+WORKBENCH = os.path.join(DATA, "workbench")
+BUILDS_DIR = os.path.join(DATA, "builds")
+STATE_PATH = os.path.join(DATA, "bars-state.json")
+MEMORY_PATH = os.path.join(DATA, "bars-memory.md")
+DUPLEX_PATH = os.path.join(DATA, "bars-duplex.json")
+TOOLS_PATH = os.path.join(DATA, "bars-tools.json")
+RECEIPTS_PATH = os.path.join(DATA, "receipts.jsonl")
 LEGACY_STATE_PATH = os.path.join(ROOT, "tars-state.json")
 LEGACY_MEMORY_PATH = os.path.join(ROOT, "tars-memory.md")
 LEGACY_DUPLEX_PATH = os.path.join(ROOT, "tars-duplex.json")
+LEGACY_TOOLS_PATH = os.path.join(ROOT, "tars-tools.json")
 
 def _read_path(primary, legacy):
     return primary if os.path.exists(primary) else (legacy if os.path.exists(legacy) else primary)
@@ -38,7 +54,7 @@ def _migrate_legacy_file(primary, legacy):
         return
     tmp = None
     try:
-        fd, tmp = tempfile.mkstemp(prefix=".bars-migrate-", dir=ROOT)
+        fd, tmp = tempfile.mkstemp(prefix=".bars-migrate-", dir=DATA)
         os.close(fd)
         shutil.copyfile(legacy, tmp)
         os.replace(tmp, primary)
@@ -53,8 +69,14 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
                           (MEMORY_PATH, LEGACY_MEMORY_PATH),
                           (DUPLEX_PATH, LEGACY_DUPLEX_PATH)):
     _migrate_legacy_file(_primary, _legacy)
-PORT = 4321
-DUPLEX_PORT = 4323
+PORT = int(os.environ.get("BARS_PORT", "4321"))
+DUPLEX_PORT = int(os.environ.get("BARS_DUPLEX_PORT", "4323"))
+BIND = os.environ.get("BARS_BIND", "127.0.0.1")
+INTERNAL_WORKER = os.environ.get("BARS_INTERNAL_WORKER", "1") != "0"
+OPERATOR_TOKEN = os.environ.get("BARS_OPERATOR_TOKEN", "")
+ALLOWED_ORIGINS = [o.strip().rstrip("/") for o in
+                   os.environ.get("BARS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+GIT_SHA = os.environ.get("BARS_GIT_SHA", "")
 MISSION_TIMEOUT = 900  # seconds
 SQUAD_NAMES = ["CASE", "KIPP", "PLEX", "N1X", "V0X"]
 # the model bench (conversational brain: chat / debrief / vision / duplex)
@@ -69,7 +91,8 @@ MODELS = [
     {"id": "claude-sonnet-5", "label": "Sonnet 5", "note": "native balanced"},
     {"id": "claude-haiku-4-5-20251001", "label": "Haiku 4.5 native", "note": "native fastest"},
 ]
-LAST_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "model": ""}
+LAST_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "model": "",
+              "lane": None, "routing": None}
 
 # Jarvis config is read as a KEY FALLBACK ONLY (read-only, same pattern as
 # Mission Control). BARS never writes anything outside its own folder.
@@ -86,8 +109,12 @@ def _load_json(path):
     except Exception:
         return {}
 
+CONFIG_PATH = os.environ.get("BARS_CONFIG") or (
+    os.path.join(ROOT, "config.json") if os.path.exists(os.path.join(ROOT, "config.json"))
+    else os.path.join(DATA, "config.json"))
+
 def load_config():
-    cfg = _load_json(os.path.join(ROOT, "config.json"))
+    cfg = _load_json(CONFIG_PATH)
     fb = _load_json(JARVIS_CONFIG)  # fallback keys only — never Jarvis's voice_id
     model = cfg.get("model", {})
     el = cfg.get("elevenlabs", {})
@@ -112,7 +139,41 @@ def load_config():
         "hue": cfg.get("hue", {}),
     }
 
-CONFIG = load_config()
+def _apply_env_overrides(cfg):
+    """Server/container env wins over config.json so secrets never sit in files."""
+    env = os.environ.get
+    groq = env("GROQ_API_TOKEN") or env("GROQ_API_KEY")
+    openrouter = env("OPEN_ROUTER_API") or env("OPENROUTER_API_KEY")
+    gateway = env("AI_GATEWAY_API_KEY")
+    anthropic = env("ANTHROPIC_API_KEY") or env("BARS_MODEL_API_KEY")
+    if gateway:
+        # bars_router talks to the gateway directly; keep a static fallback too.
+        cfg["anthropic_key"] = cfg["anthropic_key"] or gateway
+    if groq:
+        cfg["anthropic_key"] = groq
+        cfg["base_url"] = (env("BARS_BASE_URL") or "https://api.groq.com/openai/v1").strip()
+        cfg["model"] = env("BARS_MODEL") or "openai/gpt-oss-120b"
+    elif openrouter:
+        cfg["anthropic_key"] = openrouter
+        cfg["base_url"] = (env("BARS_BASE_URL") or "https://openrouter.ai/api/v1").strip()
+        cfg["model"] = env("BARS_MODEL") or cfg["model"]
+    elif anthropic:
+        cfg["anthropic_key"] = anthropic
+        if env("BARS_BASE_URL"):
+            cfg["base_url"] = env("BARS_BASE_URL").strip()
+        if env("BARS_MODEL"):
+            cfg["model"] = env("BARS_MODEL")
+    el = env("ELEVEN_LABS_API") or env("ELEVENLABS_API_KEY")
+    if el:
+        cfg["el_key"] = el
+    if env("ELEVENLABS_VOICE_ID"):
+        cfg["el_voice"] = env("ELEVENLABS_VOICE_ID")
+    oa = env("OPENAI_API_KEY")
+    if oa:
+        cfg["openai_key"] = oa
+    return cfg
+
+CONFIG = _apply_env_overrides(load_config())
 hue.init(CONFIG["hue"], ROOT)
 
 def duplex_token():
@@ -120,7 +181,7 @@ def duplex_token():
     try:
         tok = json.load(open(source))["token"]
         if source != DUPLEX_PATH:
-            fd, tmp = tempfile.mkstemp(prefix=".bars-duplex-", dir=ROOT)
+            fd, tmp = tempfile.mkstemp(prefix=".bars-duplex-", dir=DATA)
             try:
                 with os.fdopen(fd, "w") as f:
                     json.dump({"token": tok, "_use": "Bearer token for the OpenAI-compatible "
@@ -194,7 +255,7 @@ def load_state():
 
 def save_state(state):
     with STATE_LOCK:
-        fd, tmp = tempfile.mkstemp(dir=ROOT)
+        fd, tmp = tempfile.mkstemp(dir=DATA)
         with os.fdopen(fd, "w") as f:
             json.dump(state, f, indent=2)
         os.replace(tmp, STATE_PATH)
@@ -276,6 +337,155 @@ def persona(state, spoken=False):
                   "[ad-libs], [beat drops], [scratches], [pauses on the break] — nothing else in brackets. ")
     return p
 
+# ------------------------------------------------- sovereign runtime helpers
+
+_MODELS_CACHE = {"t": 0.0, "models": None}
+
+def provider_models():
+    """Live model ids for the configured OpenAI-compatible provider, cached 10 min.
+    Returns None when no compatible provider is configured or none was ever read.
+    Never raises: model availability must be verified or reported, not assumed."""
+    base = (CONFIG.get("base_url") or "").strip().rstrip("/")
+    if not base or not CONFIG.get("anthropic_key"):
+        return None
+    if time.time() - _MODELS_CACHE["t"] < 600:
+        return _MODELS_CACHE["models"]
+    try:
+        req = urllib.request.Request(
+            base + "/models",
+            headers={"Authorization": f"Bearer {CONFIG['anthropic_key']}"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.load(r)
+        ids = sorted(str(m.get("id")) for m in data.get("data", []) if m.get("id"))
+        _MODELS_CACHE.update(t=time.time(), models=ids)
+    except Exception:
+        _MODELS_CACHE["t"] = time.time()   # back off; keep any stale list
+    return _MODELS_CACHE["models"]
+
+# Explicit provider allowlist for FREE lanes. Anything not listed here is
+# treated as paid and is fail-closed unless BARS_ALLOW_PAID=1 is set with a
+# token budget. Groq's free tier is the default sovereign lane.
+FREE_PROVIDERS = [h.strip().lower() for h in
+                  os.environ.get("BARS_FREE_PROVIDERS", "api.groq.com").split(",")
+                  if h.strip()]
+
+def _paid_route(host):
+    h = (host or "").lower()
+    return not any(f in h for f in FREE_PROVIDERS)
+
+REC_LOCK = threading.Lock()
+
+def _receipt(ev):
+    """Durable routing receipt: one JSON line per model call in DATA/receipts.jsonl."""
+    ev = dict(ev)
+    ev.setdefault("ts", time.time())
+    try:
+        with REC_LOCK:
+            if os.path.exists(RECEIPTS_PATH) and os.path.getsize(RECEIPTS_PATH) > 4_000_000:
+                with open(RECEIPTS_PATH) as f:
+                    tail = f.read()[-1_000_000:]
+                with open(RECEIPTS_PATH, "w") as f:
+                    f.write(tail)
+            with open(RECEIPTS_PATH, "a") as f:
+                f.write(json.dumps(ev) + "\n")
+    except Exception:
+        pass
+
+def _receipts_tail(n=500):
+    try:
+        with open(RECEIPTS_PATH) as f:
+            lines = f.readlines()[-n:]
+        out = []
+        for ln in lines:
+            try:
+                out.append(json.loads(ln))
+            except Exception:
+                pass
+        return out
+    except Exception:
+        return []
+
+def _paid_tokens_today():
+    day = time.strftime("%Y-%m-%d")
+    total = 0
+    for ev in _receipts_tail(20000):
+        if ev.get("paid") and time.strftime("%Y-%m-%d", time.localtime(ev.get("ts", 0))) == day:
+            total += int(ev.get("tokens_in", 0) or 0) + int(ev.get("tokens_out", 0) or 0)
+    return total
+
+def _enforce_paid(model):
+    """Fail-closed paid escalation: a paid route runs ONLY when explicitly
+    enabled AND under its hard daily token budget. Default posture: free lanes
+    only; a blocked call errors truthfully instead of silently spending."""
+    if os.environ.get("BARS_ALLOW_PAID") != "1":
+        raise RuntimeError(
+            f"Paid route '{model}' is blocked (fail-closed). Configure a free lane "
+            "or set BARS_ALLOW_PAID=1 with BARS_PAID_TOKEN_BUDGET.")
+    budget = int(os.environ.get("BARS_PAID_TOKEN_BUDGET", "100000"))
+    used = _paid_tokens_today()
+    if used >= budget:
+        raise RuntimeError(
+            f"Paid token budget exhausted today ({used}/{budget}). Fail-closed.")
+
+def _latency_stats():
+    evs = [e for e in _receipts_tail(300) if e.get("kind") == "chat"]
+    def avg(pred):
+        xs = [e.get("ms", 0) for e in evs if pred(e) and e.get("ms") is not None]
+        return round(sum(xs) / len(xs)) if xs else None
+    return {"samples": len(evs),
+            "avg_ms_all": avg(lambda e: True),
+            "avg_ms_flash_lane": avg(lambda e: e.get("lane") in ("flash", "direct"))}
+
+def _origin_allowed(origin):
+    o = (origin or "").strip().rstrip("/")
+    if not o:
+        return True                       # same-origin browsers send no Origin
+    if re.match(r"https?://(localhost|127\.0\.0\.1)(:\d+)?$", o):
+        return True
+    return o in ALLOWED_ORIGINS
+
+def _token_ok(headers):
+    """Operator bearer token: Authorization, X-BARS-Token, or the UI shim cookie.
+    With BARS_OPERATOR_TOKEN unset the server runs in open local mode."""
+    if not OPERATOR_TOKEN:
+        return True
+    if headers.get("Authorization", "") == f"Bearer {OPERATOR_TOKEN}":
+        return True
+    if headers.get("X-BARS-Token", "") == OPERATOR_TOKEN:
+        return True
+    m = re.search(r"(?:^|;\s*)bars_token=([^\s;]+)", headers.get("Cookie", ""))
+    return bool(m) and m.group(1) == OPERATOR_TOKEN
+
+# Injected into served pages when an operator token is configured: adds the
+# stored bearer to same-origin fetches, shares it via cookie for plain page
+# navigations, and prompts once on 401 (never for the public status polls).
+AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;var K='bars_operator_token';"
+    b"function t(){try{return localStorage.getItem(K)||''}catch(e){return''}}"
+    b"function save(v){try{localStorage.setItem(K,v)}catch(e){}document.cookie='bars_token='+v+';path=/;SameSite=Lax'}"
+    b"if(t())document.cookie='bars_token='+t()+';path=/;SameSite=Lax';"
+    b"var QUIET=['/api/status','/missions'];var of=window.fetch.bind(window);"
+    b"window.fetch=function(u,o){o=o||{};var url=(typeof u==='string')?u:(u&&u.url)||'';"
+    b"var same=url[0]==='/'||url.indexOf(location.origin)===0;var h=new Headers(o.headers||{});"
+    b"if(same&&t()&&!h.has('Authorization'))h.set('Authorization','Bearer '+t());o.headers=h;"
+    b"return of(u,o).then(function(r){if(r.status===401&&same&&QUIET.indexOf(url.split('?')[0])===-1){"
+    b"var v=window.prompt('BARS operator token');if(v){save(v);var h2=new Headers(o.headers||{});"
+    b"h2.set('Authorization','Bearer '+v);o.headers=h2;return of(u,o)}}return r})}})();</script>")
+
+def _inject_auth_shim(body):
+    idx = body.lower().find(b"</head>")
+    if idx == -1:
+        return AUTH_SHIM + body
+    return body[:idx] + AUTH_SHIM + body[idx:]
+
+def _public_status():
+    """Anonymous /api/status: enough for the public front door, nothing sensitive."""
+    return {"ok": True, "service": "bars", "mode": "public",
+            "brain": bool(CONFIG["anthropic_key"]),
+            "voice": bool((CONFIG["el_key"] and CONFIG["el_voice"])
+                          or os.environ.get("GROQ_API_TOKEN") or os.environ.get("GROQ_API_KEY")),
+            "active": sum(1 for m in MISSIONS.values() if m["status"] == "EN ROUTE"),
+            "sha": GIT_SHA or None}
+
 # ---------------------------------------------------------------- anthropic api
 
 def _spend_bridge():
@@ -298,18 +508,26 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     if user_message:
         try:
             from bars_router import bars_route
-            route = bars_route(user_message)
+            route = bars_route(user_message, available=provider_models())
             if route.get("cache_hit") and route.get("cached"):
+                _receipt({"kind": "chat", "lane": "direct", "cache_hit": True,
+                          "model": None, "ms": 0, "paid": False})
                 return route["cached"]  # instant cached response
             m = route.get("model")
             if m:
                 routed_model = m["model"]
                 routed_base = m["base_url"]
                 routed_tokens = m["max_tokens"]
-                # Get the API key for the routed model's env
+                # Get the API key for the routed model's env. Never send one
+                # provider's key to another provider's endpoint: with no env
+                # key present there is no routed call — fall back to static.
                 env_key = m.get("api_key_env", "")
-                if env_key:
-                    routed_key = os.environ.get(env_key, "") or _load_json(os.path.join(ROOT, "config.json")).get("model", {}).get("api_key", "")
+                routed_key = os.environ.get(env_key, "") if env_key else ""
+                if not routed_key:
+                    routed_model = routed_base = None
+                else:
+                    LAST_USAGE["lane"] = m.get("lane")
+                    LAST_USAGE["routing"] = m.get("routing")
                 # Only use router's max_tokens if it's >= the requested amount
                 # (the handler knows the prompt size better than the router)
                 if routed_tokens >= max_tokens:
@@ -330,6 +548,12 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     model = routed_model or CONFIG["model"]
     api_key = routed_key or CONFIG["anthropic_key"]
     use_or = bool(base) or ("/" in str(model) and not str(model).startswith("claude"))
+    max_tokens = min(max_tokens, int(os.environ.get("BARS_MAX_TOKENS_CAP", "4096")))
+    _host = (base or "https://openrouter.ai/api/v1") if use_or else "https://api.anthropic.com"
+    paid = _paid_route(_host)
+    if paid:
+        _enforce_paid(str(model))
+    t0 = time.time()
     if use_or:
         url = (base or "https://openrouter.ai/api/v1") + "/chat/completions"
         oai_msgs = [{"role": "system", "content": system}] + list(messages)
@@ -349,6 +573,18 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
         with urllib.request.urlopen(req, timeout=90) as r:
             data = json.load(r)
         txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        _u = data.get("usage") or {}
+        LAST_USAGE.update({"tokens_in": _u.get("prompt_tokens", 0),
+                           "tokens_out": _u.get("completion_tokens", 0),
+                           "model": str(model)})
+        if not routed_model:
+            LAST_USAGE["lane"] = "static"
+            LAST_USAGE["routing"] = "static-config"
+        _receipt({"kind": "chat", "lane": LAST_USAGE.get("lane"),
+                  "routing": LAST_USAGE.get("routing"), "model": str(model),
+                  "tokens_in": _u.get("prompt_tokens", 0),
+                  "tokens_out": _u.get("completion_tokens", 0),
+                  "ms": int((time.time() - t0) * 1000), "paid": paid})
         if sb:
             try:
                 u = sb.record_llm(agent="bars", model=str(model), response_json=data, task_id="bars-chat")
@@ -374,6 +610,15 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.load(r)
     txt = "".join(b.get("text", "") for b in data.get("content", []))
+    _u = data.get("usage") or {}
+    LAST_USAGE.update({"tokens_in": _u.get("input_tokens", 0),
+                       "tokens_out": _u.get("output_tokens", 0),
+                       "model": str(CONFIG["model"]), "lane": "static",
+                       "routing": "anthropic-native"})
+    _receipt({"kind": "chat", "lane": "static", "routing": "anthropic-native",
+              "model": str(CONFIG["model"]), "tokens_in": _u.get("input_tokens", 0),
+              "tokens_out": _u.get("output_tokens", 0),
+              "ms": int((time.time() - t0) * 1000), "paid": paid})
     if sb:
         try:
             u = sb.record_llm(agent="bars", model=str(CONFIG["model"]), response_json=data, task_id="bars-chat")
@@ -442,7 +687,7 @@ def init_hands():
         "mem": mem_block,
         "presence": presence,
         "log": _hands_log,
-        "speed": (_load_json(os.path.join(ROOT, "config.json"))
+        "speed": (_load_json(CONFIG_PATH)
                   .get("takeover", {}).get("speed", "balanced")),
     })
 
@@ -581,6 +826,45 @@ def openai_transcribe(audio_bytes, mime):
     except urllib.error.HTTPError:
         return call("whisper-1")
 
+def groq_transcribe(audio_bytes, mime):
+    """Free STT lane: Groq-hosted Whisper via its OpenAI-compatible endpoint."""
+    key = os.environ.get("GROQ_API_TOKEN") or os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise RuntimeError("no Groq key")
+    model = os.environ.get("BARS_STT_MODEL", "whisper-large-v3-turbo")
+    ext = "webm" if "webm" in mime else ("mp4" if "mp4" in mime else
+          ("mp3" if "mp3" in mime or "mpeg" in mime else "wav"))
+    boundary = uuid.uuid4().hex
+    parts = [
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n".encode(),
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+        f"filename=\"audio.{ext}\"\r\nContent-Type: {mime}\r\n\r\n".encode(),
+        audio_bytes,
+        f"\r\n--{boundary}--\r\n".encode(),
+    ]
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/audio/transcriptions", data=b"".join(parts),
+        headers={"Authorization": "Bearer " + key,
+                 "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r).get("text", "").strip()
+
+
+def transcribe(audio_bytes, mime):
+    """Configured STT providers in order; raises the combined error truthfully."""
+    errors = []
+    if CONFIG["openai_key"]:
+        try:
+            return openai_transcribe(audio_bytes, mime)
+        except Exception as e:
+            errors.append(f"openai: {e}")
+    try:
+        return groq_transcribe(audio_bytes, mime)
+    except Exception as e:
+        errors.append(f"groq: {e}")
+    raise RuntimeError("STT unavailable — " + "; ".join(x[:120] for x in errors))
+
+
 def mint_realtime():
     if not CONFIG["openai_key"]:
         raise RuntimeError("No OpenAI API key (config.json openai.api_key, or the Jarvis fallback).")
@@ -670,7 +954,7 @@ def start_mission(brief, agent=None, kind="OPS", parent=None, image=None):
         mm = re.match(r"^data:image/(png|jpeg|webp);base64,(.+)$", image, re.S)
         if mm:
             ext = {"png": "png", "jpeg": "jpg", "webp": "webp"}[mm.group(1)]
-            wdir = (os.path.join(ROOT, "builds", mid) if kind == "BUILD"
+            wdir = (os.path.join(BUILDS_DIR, mid) if kind == "BUILD"
                     else os.path.join(WORKBENCH, mid))
             try:
                 os.makedirs(wdir, exist_ok=True)
@@ -801,8 +1085,6 @@ DISALLOWED = ["Bash", "Write", "Edit", "NotebookEdit", "Task", "KillShell", "mcp
 # safe:True  → research-grade, available on ANY mission (OPS/BUILD, strict config)
 # safe:False → acts on the outside world, ONLY on confirmed ACT missions ("do it")
 # auth: none | key (env inputs in the panel) | oauth (one-time `claude mcp add` + /mcp)
-TOOLS_PATH = os.path.join(ROOT, "bars-tools.json")
-LEGACY_TOOLS_PATH = os.path.join(ROOT, "tars-tools.json")
 _migrate_legacy_file(TOOLS_PATH, LEGACY_TOOLS_PATH)
 TOOL_CATALOG = {
     # -------- research-safe --------
@@ -917,7 +1199,7 @@ def tools_installed():
 
 def tools_save(installed):
     with TOOLS_LOCK:
-        fd, tmp = tempfile.mkstemp(dir=ROOT)
+        fd, tmp = tempfile.mkstemp(dir=DATA)
         with os.fdopen(fd, "w") as f:
             json.dump({"installed": installed}, f, indent=2)
         os.replace(tmp, TOOLS_PATH)
@@ -1136,6 +1418,60 @@ def _tool_label(name, inp):
                 detail = str(inp[k]); break
     return f"{name}: {detail}" if detail else name
 
+def run_internal_mission(m):
+    """Provider-only mission execution for hosts with no coding CLI (the VPS).
+    Truthful scope: research/synthesis via the configured model lanes. No
+    shell, no file writes outside the mission report, no external tools, and
+    BUILD briefs produce a spec instead of pretending files were built."""
+    mid = m["id"]
+    mdir = os.path.join(MISSIONS_DIR, mid)
+    os.makedirs(mdir, exist_ok=True)
+    try:
+        _event(m, "sys", "Internal worker engaged (no local CLI on this host).")
+        scope = ("You have NO web, shell, or file tools in this environment — answer "
+                 "from knowledge and say plainly where live verification would be needed.")
+        if m.get("kind") == "BUILD":
+            _event(m, "sys", "Build execution needs the coding CLI; producing a build spec.")
+            scope += (" This was a BUILD brief: deliver the complete build spec/design "
+                      "document instead, and state that file creation needs a host with "
+                      "the coding CLI.")
+        worker_prompt = (
+            f"MISSION BRIEF: {m['brief']}\n\n"
+            "Execute this mission as a bounded research/synthesis report. " + scope +
+            " Your FINAL message must be the complete mission report in markdown: "
+            "start with '# MISSION REPORT', then '## Findings' (specific, honest about "
+            "sources), then '## Recommended next actions' (numbered, concrete). "
+            "Drafts only — nothing here sends, posts, or builds outward.")
+        report = anthropic_chat(
+            persona(STATE) + " You write mission reports: professional substance, BARS "
+            "voice allowed in at most one dry line at the top. The report is the "
+            "deliverable — completeness beats brevity." + mem_block(),
+            [{"role": "user", "content": worker_prompt}],
+            max_tokens=1800, user_message=m["brief"])
+        if not report.strip():
+            raise RuntimeError("empty report from provider")
+        _event(m, "sys", "Report written.")
+        with open(os.path.join(mdir, "report.md"), "w") as f:
+            f.write(report)
+        try:
+            debrief = speakable(anthropic_chat(
+                persona(STATE, spoken=True) + mem_block(),
+                [{"role": "user", "content":
+                  f"Mission brief was: {m['brief']}\n\nYour mission report:\n"
+                  f"{report[:6000]}\n\nGive the Commander the spoken debrief now — what "
+                  "you found, the one thing that matters most, and anything he won't "
+                  "like hearing."}],
+                max_tokens=250))
+        except Exception:
+            debrief = "Mission complete. Report's on the board. Read it."
+        m.update(status="COMPLETE", t_end=time.time(), cost=None, debrief=debrief)
+        hue.event("complete")
+    except Exception as e:
+        m.update(status="FAILED", t_end=time.time(),
+                 debrief=f"Job failed: {str(e)[:200]}")
+        hue.event("fail")
+    persist_missions()
+
 def run_mission(mid):
     m = MISSIONS[mid]
     mdir = os.path.join(MISSIONS_DIR, mid)
@@ -1144,12 +1480,17 @@ def run_mission(mid):
     os.makedirs(wdir, exist_ok=True)
     claude = find_claude()
     if not claude:
-        m.update(status="FAILED", t_end=time.time(),
-                 debrief="Can't deploy — the claude CLI isn't on this machine's PATH.")
-        persist_missions(); return
+        if INTERNAL_WORKER:
+            run_internal_mission(m)
+        else:
+            m.update(status="FAILED", t_end=time.time(),
+                     debrief="Can't deploy — no coding CLI on this host and the "
+                             "internal worker is disabled.")
+            persist_missions()
+        return
 
     if m.get("kind") == "BUILD":
-        wdir = os.path.join(ROOT, "builds", mid)
+        wdir = os.path.join(BUILDS_DIR, mid)
         os.makedirs(wdir, exist_ok=True)
         prompt = (
             f"BUILD MISSION: {m['brief']}\n\n"
@@ -1291,7 +1632,7 @@ def run_mission(mid):
         with open(os.path.join(mdir, "report.md"), "w") as f:
             f.write(report)
         if m.get("kind") == "BUILD" and \
-           os.path.isfile(os.path.join(ROOT, "builds", mid, "index.html")):
+           os.path.isfile(os.path.join(BUILDS_DIR, mid, "index.html")):
             m["build_url"] = f"/builds/{mid}/"
             try:    # the deliverable opens itself — sir shouldn't have to hunt for it
                 import webbrowser as _wb
@@ -1359,28 +1700,53 @@ def _tts_call(text, model_id, settings):
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read()
 
+def _groq_tts(text):
+    """Free TTS lane: Groq speech endpoint (Orpheus). Returns wav bytes or None."""
+    key = os.environ.get("GROQ_API_TOKEN") or os.environ.get("GROQ_API_KEY")
+    if not key:
+        return None
+    model = os.environ.get("BARS_TTS_MODEL", "orpheus-v1-english")
+    voice = os.environ.get("BARS_TTS_VOICE", "autumn")
+    body = json.dumps({"model": model, "voice": voice,
+                       "input": speakable(text)[:900],
+                       "response_format": "wav"}).encode()
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/audio/speech", data=body,
+        headers={"Authorization": f"Bearer {key}", "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return r.read()
+
+
 def tts_bytes(text):
-    # Default voice if key present but voice_id empty (Roger-like public id used in example)
+    """-> (audio_bytes, content_type) or (None, None): ElevenLabs first, then the
+    free Groq speech lane. (None, None) tells the caller to use browser speech."""
     if CONFIG["el_key"] and not CONFIG.get("el_voice"):
         CONFIG["el_voice"] = "CwhRBWXzGAHq8TQ4Fs17"
-    if not (CONFIG["el_key"] and CONFIG["el_voice"]):
-        return None
     t = speakable(text)
-    # [sighs]-style tags → try the expressive v3 model; fall back to turbo w/o tags
-    if AUDIO_TAG.search(t):
+    if CONFIG["el_key"] and CONFIG["el_voice"]:
+        # [sighs]-style tags → try the expressive v3 model; fall back to turbo w/o tags
+        if AUDIO_TAG.search(t):
+            try:
+                return _tts_call(t, CONFIG["el_model_expr"],
+                                 {"stability": 0.5, "similarity_boost": 0.8}), "audio/mpeg"
+            except Exception:
+                t = AUDIO_TAG.sub("", t)
         try:
-            return _tts_call(t, CONFIG["el_model_expr"],
-                             {"stability": 0.5, "similarity_boost": 0.8})
+            return _tts_call(t, CONFIG["el_model"], CONFIG["el_settings"]), "audio/mpeg"
         except Exception:
-            t = AUDIO_TAG.sub("", t)
+            # one more attempt with minimal settings
+            try:
+                return _tts_call(t, "eleven_turbo_v2_5",
+                                 {"stability": 0.5, "similarity_boost": 0.8}), "audio/mpeg"
+            except Exception:
+                pass
     try:
-        return _tts_call(t, CONFIG["el_model"], CONFIG["el_settings"])
+        audio = _groq_tts(t)
+        if audio:
+            return audio, "audio/wav"
     except Exception:
-        # one more attempt with minimal settings
-        try:
-            return _tts_call(t, "eleven_turbo_v2_5", {"stability": 0.5, "similarity_boost": 0.8})
-        except Exception:
-            return None
+        pass
+    return None, None
 
 # ---------------------------------------------------------------- http
 
@@ -1389,7 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _guard(self):
         origin = self.headers.get("Origin", "")
-        if origin and not re.match(r"https?://(localhost|127\.0\.0\.1)(:\d+)?$", origin):
+        if origin and not _origin_allowed(origin):
             self._json({"error": "forbidden"}, 403); return False
         return True
 
@@ -1398,9 +1764,35 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
+        origin = self.headers.get("Origin", "")
+        if origin and _origin_allowed(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _need_auth(self):
+        body = json.dumps({"error": "auth required", "auth": "bearer"}).encode()
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("WWW-Authenticate", 'Bearer realm="bars"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        origin = self.headers.get("Origin", "")
+        self.send_response(204)
+        if origin and _origin_allowed(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Headers",
+                             "authorization,content-type,x-bars-token")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
@@ -1416,11 +1808,23 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if HANDS and path == "/api/hands":
             HANDS.handle(self, "GET", self.path, None); return
-        if path in ("/", "/frontdoor", "/frontdoor.html", "/agent", "/agent/", "/index.html"):
-            page = "frontdoor.html" if path in ("/", "/frontdoor", "/frontdoor.html") else "index.html"
+        if path == "/health":
+            self._json({"ok": True, "service": "bars", "sha": GIT_SHA or None}); return
+        public = path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/",
+                          "/agent", "/agent/", "/index.html") or path.startswith("/static/")
+        if not public and not _token_ok(self.headers):
+            if path == "/api/status":
+                self._json(_public_status()); return   # sanitized anonymous status
+            self._need_auth(); return
+        if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html"):
+            # the visual BARS cockpit is the primary interface at / and /agent/;
+            # the newer front-door experience stays available at /frontdoor/.
+            page = "frontdoor.html" if path in ("/frontdoor", "/frontdoor.html", "/frontdoor/") else "index.html"
             try:
                 with open(os.path.join(STATIC, page), "rb") as f:
                     body = f.read()
+                if OPERATOR_TOKEN:
+                    body = _inject_auth_shim(body)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -1430,7 +1834,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json({"error": f"{page} missing"}, 500)
         elif path.startswith("/builds/"):
-            base = os.path.realpath(os.path.join(ROOT, "builds"))
+            base = os.path.realpath(BUILDS_DIR)
             rel = path[len("/builds/"):] or ""
             if rel.endswith("/") or rel == "":
                 rel += "index.html"
@@ -1504,11 +1908,16 @@ class Handler(BaseHTTPRequestHandler):
                             "needs": tool_needs(tid, inst) if inst is not None else []})
             self._json({"tools": out})
         elif path == "/api/models":
+            avail = provider_models()
+            from bars_router import lane_plan
             self._json({
-                "models": MODELS,
+                "models": ([{"id": i, "label": i, "note": "live from provider"}
+                            for i in avail] if avail else MODELS),
+                "live": bool(avail),
                 "current": CONFIG["model"],
                 "base_url": CONFIG.get("base_url") or "",
                 "openrouter": bool(CONFIG.get("base_url")),
+                "lanes": lane_plan(avail),
                 "usage": dict(LAST_USAGE),
             })
         elif path == "/api/spend":
@@ -1527,7 +1936,15 @@ class Handler(BaseHTTPRequestHandler):
                     spend = sb.summary("pauli-effect")
                 except Exception:
                     pass
-            self._json({"ok": True, "voice": bool(CONFIG["el_key"] and CONFIG["el_voice"]),
+            self._json({"ok": True,
+                        "sha": GIT_SHA or None,
+                        "auth_required": bool(OPERATOR_TOKEN),
+                        "data_dir": DATA,
+                        "missions_engine": ("claude-cli" if find_claude() else
+                                            "internal-worker" if INTERNAL_WORKER else "unavailable"),
+                        "models_live": bool(provider_models()),
+                        "latency": _latency_stats(),
+                        "voice": bool(CONFIG["el_key"] and CONFIG["el_voice"]),
                         "voice_name": CONFIG.get("el_voice_name", "VOICE"),
                         "brain": bool(CONFIG["anthropic_key"]), "model": CONFIG["model"],
                         "base_url": CONFIG.get("base_url") or "",
@@ -1549,6 +1966,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard():
             return
+        if not _token_ok(self.headers):
+            self._need_auth(); return
         path = self.path.split("?")[0]
 
         if path == "/stt":                    # binary audio body — handle before JSON parse
@@ -1557,7 +1976,7 @@ class Handler(BaseHTTPRequestHandler):
             if not raw:
                 self._json({"error": "no audio"}, 400); return
             try:
-                text = openai_transcribe(raw, self.headers.get("Content-Type", "audio/webm"))
+                text = transcribe(raw, self.headers.get("Content-Type", "audio/webm"))
                 self._json({"text": text})
             except Exception as e:
                 self._json({"error": str(e)[:200]}, 500)
@@ -1669,7 +2088,9 @@ class Handler(BaseHTTPRequestHandler):
                     "pending": pending,
                     "tool": tool,
                     "takeover": takeover,
-                    "model": CONFIG.get("model"),
+                    "model": LAST_USAGE.get("model") or CONFIG.get("model"),
+                    "lane": LAST_USAGE.get("lane"),
+                    "routing": LAST_USAGE.get("routing"),
                     "usage": {
                         "tokens_in": LAST_USAGE.get("tokens_in", 0),
                         "tokens_out": LAST_USAGE.get("tokens_out", 0),
@@ -1927,13 +2348,13 @@ class Handler(BaseHTTPRequestHandler):
             CONFIG["el_voice"] = vid
             CONFIG["el_voice_name"] = name
             try:  # persist so the pick survives restarts
-                cfg = _load_json(os.path.join(ROOT, "config.json"))
+                cfg = _load_json(CONFIG_PATH)
                 cfg.setdefault("elevenlabs", {})["voice_id"] = vid
                 cfg["elevenlabs"]["_voice_name"] = name
-                fd, tmp = tempfile.mkstemp(dir=ROOT)
+                fd, tmp = tempfile.mkstemp(dir=DATA)
                 with os.fdopen(fd, "w") as f:
                     json.dump(cfg, f, indent=2)
-                os.replace(tmp, os.path.join(ROOT, "config.json"))
+                os.replace(tmp, CONFIG_PATH)
             except Exception:
                 pass
             self._json({"ok": True, "voice": name})
@@ -1941,7 +2362,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/model":
             mid = (data.get("model") or "").strip()
             # Allow any OpenRouter slug OR catalog id so switcher stays live
-            known = any(m["id"] == mid for m in MODELS)
+            avail = provider_models()
+            known = any(m["id"] == mid for m in MODELS) or (avail and mid in avail)
             if not mid or (not known and "/" not in mid and not mid.startswith("claude-")):
                 self._json({"error": "unknown model"}, 400); return
             CONFIG["model"] = mid
@@ -1949,14 +2371,14 @@ class Handler(BaseHTTPRequestHandler):
             if "/" in mid and not (CONFIG.get("base_url") or "").strip():
                 CONFIG["base_url"] = "https://openrouter.ai/api/v1"
             try:  # persist so the pick survives restarts
-                cfg = _load_json(os.path.join(ROOT, "config.json"))
+                cfg = _load_json(CONFIG_PATH)
                 cfg.setdefault("model", {})["model"] = mid
                 if "/" in mid:
                     cfg["model"]["base_url"] = CONFIG.get("base_url") or "https://openrouter.ai/api/v1"
-                fd, tmp = tempfile.mkstemp(dir=ROOT)
+                fd, tmp = tempfile.mkstemp(dir=DATA)
                 with os.fdopen(fd, "w") as f:
                     json.dump(cfg, f, indent=2)
-                os.replace(tmp, os.path.join(ROOT, "config.json"))
+                os.replace(tmp, CONFIG_PATH)
             except Exception:
                 pass
             label = next((m["label"] for m in MODELS if m["id"] == mid), mid)
@@ -1976,13 +2398,13 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._json({"error": "empty"}, 400); return
             try:
-                audio = tts_bytes(text)
+                audio, ctype = tts_bytes(text)
             except Exception as e:
                 self._json({"error": str(e)[:200], "fallback": True, "browser_fallback": True}, 200); return
             if not audio:
                 self._json({"fallback": True, "browser_fallback": True, "text": text}, 200); return
             self.send_response(200)
-            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Type", ctype)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(audio)))
             self.end_headers()
@@ -2072,24 +2494,36 @@ class DuplexHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------- main
 
 def main():
-    os.makedirs(MISSIONS_DIR, exist_ok=True)
-    os.makedirs(WORKBENCH, exist_ok=True)
+    for d in (MISSIONS_DIR, WORKBENCH, BUILDS_DIR):
+        os.makedirs(d, exist_ok=True)
     load_missions()
     init_hands()
     duplex = ThreadingHTTPServer(("127.0.0.1", DUPLEX_PORT), DuplexHandler)
     threading.Thread(target=duplex.serve_forever, daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"BARS online. The culture is live. → http://localhost:{PORT}   "
+    srv = ThreadingHTTPServer((BIND, PORT), Handler)
+
+    def _term(_signum, _frame):
+        try:
+            save_state(STATE)
+            persist_missions()
+        except Exception:
+            pass
+        threading.Thread(target=srv.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, _term)
+    print(f"BARS online. The culture is live. → http://{BIND}:{PORT}   "
           f"(brain: {'OK' if CONFIG['anthropic_key'] else 'MISSING'} · "
-          f"voice: {'OK' if CONFIG['el_key'] and CONFIG['el_voice'] else 'browser fallback'} · "
-          f"claude CLI: {'OK' if find_claude() else 'MISSING'} · "
-          f"hue: {hue.status()['state']} · duplex brain: 127.0.0.1:{DUPLEX_PORT})")
-    # Auto-open browser (cross-platform)
-    try:
-        import webbrowser as _wb2
-        threading.Thread(target=lambda: (time.sleep(1.5), _wb2.open(f"http://localhost:{PORT}")), daemon=True).start()
-    except Exception:
-        pass
+          f"voice: {'OK' if CONFIG['el_key'] and CONFIG['el_voice'] else 'groq/browser fallback'} · "
+          f"claude CLI: {'OK' if find_claude() else 'internal worker' if INTERNAL_WORKER else 'MISSING'} · "
+          f"hue: {hue.status()['state']} · duplex brain: 127.0.0.1:{DUPLEX_PORT} · "
+          f"auth: {'token' if OPERATOR_TOKEN else 'open local mode'} · data: {DATA})")
+    if not os.environ.get("BARS_NO_BROWSER") and BIND in ("127.0.0.1", "localhost"):
+        # Auto-open browser (local runs only)
+        try:
+            import webbrowser as _wb2
+            threading.Thread(target=lambda: (time.sleep(1.5), _wb2.open(f"http://localhost:{PORT}")), daemon=True).start()
+        except Exception:
+            pass
     srv.serve_forever()
 
 if __name__ == "__main__":

@@ -1,0 +1,21 @@
+# Reference compose file for the sovereign BARS runtime on the Hostinger VPS.
+# Coolify can build the same Dockerfile; this file is the manual fallback.
+# Ports are loopback-only: Caddy terminates TLS and proxies to 127.0.0.1:4321.
+services:
+  bars:
+    build: .
+    image: bars-sovereign:local
+    container_name: bars
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4321:4321"
+    volumes:
+      - /opt/bars/data:/data
+    env_file:
+      - /opt/bars/.env
+    # Hostinger multi-tenant KVM shows heavy CPU steal — keep BARS capped so
+    # StarNet/Command Center and the watchdogs are never starved.
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 128
+    read_only: false

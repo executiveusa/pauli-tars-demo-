@@ -1,0 +1,23 @@
+# Caddy vhost for sovereign BARS. Append to the existing Caddyfile on the VPS
+# (do NOT replace it — StarNet/Command Center/terabithia routes live there).
+# DNS: bars.thepaulieffect.com A 31.220.58.212 (DNS-only in Cloudflare).
+#
+# The Python app stays on loopback: 4321 (app) and 4323 (duplex brain) are
+# never published. The app enforces its own bearer token on all non-public
+# endpoints; Caddy adds TLS and an optional second basic-auth gate.
+
+bars.thepaulieffect.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:4321
+
+	# Optional second gate (recommended while this is operator-only):
+	# basic_auth {
+	# 	bambu $2a$14$REPLACE_WITH_BCRYPT_HASH
+	# }
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
