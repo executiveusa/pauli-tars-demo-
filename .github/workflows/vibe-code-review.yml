@@ -22,8 +22,9 @@ jobs:
       llm_url: https://api.groq.com/openai/v1/chat/completions   # Groq free tier ($0):
                                          # OpenRouter free pools are upstream-saturated (429/503)
                                          # and its hidden-thinking models stall the 30-min job
-      model: openai/gpt-oss-120b   # verified live on Groq free: 2s, verdict-first, no spend;
-                                         # TPD window freed 7:39 AM (probe passed) - retrying this lane
+      model: groq/compound-mini   # verified live on Groq free: 3.6s, verdict-first, substantive, no spend;
+                                         # gpt-oss-120b org-shared TPD 200k is continuously re-consumed (~5k free at a time);
+                                         # compound-mini has its own fresh per-model daily budget
       review_concurrency: "1"   # serial review keeps the burst under free-tier token/min caps
     secrets:
       llm_token: ${{ secrets.GROQ_API_KEY }}
