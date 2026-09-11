@@ -25,14 +25,21 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 cd "$APP"
 
 echo "[deploy] snapshot data -> $ROOT/backups/data-$SHA.tar.gz (deployment-linked)"
-mkdir -p "$ROOT/backups"
+# provision writable dirs for the container user (uid 10001): a root-created
+# 0755 dir makes the first boot fail with PermissionError on /data writes
+if [ "$(id -u)" = "0" ]; then
+  install -d -m 0755 -o 10001 -g 10001 "$DATA" "${BARS_ANCHOR:-$ROOT/anchor}"
+  mkdir -p "$ROOT/backups" && chmod 0700 "$ROOT/backups"
+else
+  mkdir -p "$DATA" "${BARS_ANCHOR:-$ROOT/anchor}" "$ROOT/backups"
+fi
 if ! tar -czf "$ROOT/backups/data-$SHA.tar.gz" -C "$DATA" . 2>/dev/null; then
   # the container writes some state root/0600; a non-root docker host user
   # (CI runners) cannot read it. Snapshot through the previous image instead.
   docker image inspect "$IMG:current" >/dev/null 2>&1 || {
     echo "[deploy] FATAL: data unreadable by host user and no previous image to snapshot through"; exit 1; }
   echo "[deploy] host user cannot read all data files; snapshotting via $IMG:current"
-  docker run --rm --user 0 -v "$DATA":/data:ro -v "$ROOT/backups":/backups "$IMG:current"     sh -c "tar -czf /backups/data-$SHA.tar.gz -C /data . && chmod 0666 /backups/data-$SHA.tar.gz"
+  docker run --rm --user 0 -v "$DATA":/data:ro -v "$ROOT/backups":/backups "$IMG:current"     sh -c "tar -czf /backups/data-$SHA.tar.gz -C /data . && chown $(id -u):$(id -g) /backups/data-$SHA.tar.gz && chmod 0600 /backups/data-$SHA.tar.gz"
 fi
 
 echo "[deploy] fetch + checkout $SHA"

@@ -243,16 +243,28 @@ class ReceiptLedger:
         # durable chain state: survives restarts; checkpoint lines anchor
         # continuity across rotations so deletion/truncation is detectable.
         self._state_path = path + ".state.json"
-        st = self._load_state()
-        self._seq = st.get("seq", 0)
-        self._prev = st.get("prev", "")
         self.startup_findings = []
-        tail = self._tail_hmac()
-        anchor = self._read_anchor()
+        # ALL integrity reads UNDER the cross-process flock (state included):
+        # a concurrent append holds it for its whole ledger->state->anchor
+        # critical section, so the startup snapshot is always consistent and
+        # tail!=state means real corruption, never a mid-append race window.
+        lfd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lfd, fcntl.LOCK_EX)
+            st = self._load_state()
+            self._seq = st.get("seq", 0)
+            self._prev = st.get("prev", "")
+            tail = self._tail_hmac()
+            anchor = self._read_anchor()
+        finally:
+            os.close(lfd)
         if tail and tail != self._prev:
             self.write_failures += 1
             self.last_error = "chain-state mismatch at startup"
             self.startup_findings.append("chain-state mismatch: file tail != durable state")
+            # fail-closed, same as a corrupt/missing anchor: never extend a
+            # chain whose durable state disagrees with the ledger tail
+            self._broken = True
         elif not self._prev and tail:
             self._prev = tail
         if anchor and self._prev and anchor.get("prev") != self._prev:
@@ -297,7 +309,10 @@ class ReceiptLedger:
         written 0600 to a separate file so single-file tampering is detectable."""
         body = json.dumps({"seq": self._seq, "prev": self._prev}, sort_keys=True)
         mac = hmac.new(self._key, body.encode(), hashlib.sha256).hexdigest()
-        fd, tmp = tempfile.mkstemp(prefix=".ranchor-", dir=os.path.dirname(self.path) or ".")
+        # temp file MUST live on the anchor filesystem: os.replace cannot
+        # cross mount points (EXDEV), and /anchor is a separate volume
+        # in production - a /data temp would fail the very first write
+        fd, tmp = tempfile.mkstemp(prefix=".ranchor-", dir=os.path.dirname(self._anchor_path) or ".")
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps({"seq": self._seq, "prev": self._prev, "_h": mac}))
         os.chmod(tmp, 0o600)
@@ -384,43 +399,47 @@ class ReceiptLedger:
         try:
             with self._lock:
                 lfd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-                fcntl.flock(lfd, fcntl.LOCK_EX)   # cross-process writers
-                # runtime fail-closed: anchor or state vanished while a
-                # non-empty ledger exists -> integrity failure, refuse append
-                if (os.path.exists(self.path) and os.path.getsize(self.path) > 0
-                        and (not os.path.exists(self._anchor_path)
-                             or not os.path.exists(self._state_path))):
-                    self._broken = True
-                    self.write_failures += 1
-                    self.last_error = "receipt anchor/state disappeared at runtime (fail-closed)"
-                    os.close(lfd)
-                    return
-                # reload chain state UNDER the lock: a second process may have
-                # appended since this one initialized
-                st = self._load_state()
-                if isinstance(st.get("seq"), int):
-                    self._seq = max(self._seq, st["seq"])
-                if st.get("prev"):
-                    self._prev = st["prev"]
-                # rotate FIRST: the checkpoint anchors the previous chain tip,
-                # then this event chains from the checkpoint under one lock
-                if os.path.exists(self.path) and os.path.getsize(self.path) > self.MAX_BYTES:
-                    self._rotate()
-                self._seq += 1
-                ev["seq"] = self._seq
-                core = json.dumps(ev, sort_keys=True)
-                mac = hmac.new(self._key, (self._prev + core).encode(), hashlib.sha256).hexdigest()
-                ev["_h"] = mac
-                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
                 try:
-                    os.write(fd, (json.dumps(ev) + "\n").encode())
-                    os.fsync(fd)
+                    fcntl.flock(lfd, fcntl.LOCK_EX)   # cross-process writers
+                    # runtime fail-closed: anchor or state vanished while a
+                    # non-empty ledger exists -> integrity failure, refuse append
+                    if (os.path.exists(self.path) and os.path.getsize(self.path) > 0
+                            and (not os.path.exists(self._anchor_path)
+                                 or not os.path.exists(self._state_path))):
+                        self._broken = True
+                        self.write_failures += 1
+                        self.last_error = "receipt anchor/state disappeared at runtime (fail-closed)"
+                        return
+                    # reload chain state UNDER the lock: a second process may have
+                    # appended since this one initialized
+                    st = self._load_state()
+                    if isinstance(st.get("seq"), int):
+                        self._seq = max(self._seq, st["seq"])
+                    if st.get("prev"):
+                        self._prev = st["prev"]
+                    # rotate FIRST: the checkpoint anchors the previous chain tip,
+                    # then this event chains from the checkpoint under one lock
+                    if os.path.exists(self.path) and os.path.getsize(self.path) > self.MAX_BYTES:
+                        self._rotate()
+                    self._seq += 1
+                    ev["seq"] = self._seq
+                    core = json.dumps(ev, sort_keys=True)
+                    mac = hmac.new(self._key, (self._prev + core).encode(), hashlib.sha256).hexdigest()
+                    ev["_h"] = mac
+                    fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                    try:
+                        os.write(fd, (json.dumps(ev) + "\n").encode())
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+                    self._prev = mac
+                    self._save_state()
+                    self._write_anchor()
                 finally:
-                    os.close(fd)
-                self._prev = mac
-                self._save_state()
-                self._write_anchor()
-                os.close(lfd)
+                    # the lock fd owns the flock: it closes on EVERY exit path
+                    # (exception, fail-closed return, success) so a failed
+                    # append can never leak FDs or hold the lock
+                    os.close(lfd)
         except Exception as e:
             self.write_failures += 1
             self.last_error = f"{type(e).__name__}: {e}"

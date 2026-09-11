@@ -41,7 +41,11 @@ if [ "${1:-}" = "--with-data" ]; then
     tar -xzf "$PREV_SNAP" -C "$TMPD"
     OLD=$(mktemp -du $ROOT/.data-old-XXXXXX)
     mv "$DATA" "$OLD"
-    mv "$TMPD" "$DATA"
+    if ! mv "$TMPD" "$DATA"; then
+      mv "$OLD" "$DATA" || true
+      echo "[rollback] FATAL: data swap failed; restored original data dir" >&2
+      exit 1
+    fi
     echo "[rollback] data replaced atomically from $PREV_SNAP (old data at $OLD)"
   else
     # non-root docker host (CI runners): the container-written state is
@@ -56,7 +60,11 @@ if [ "${1:-}" = "--with-data" ]; then
       tar -xzf "$SNAP" -C "$T"
       O=$(mktemp -du /baroot/.data-old-XXXXXX)
       mv /baroot/data "$O"
-      mv "$T" /baroot/data
+      if ! mv "$T" /baroot/data; then
+        mv "$O" /baroot/data || true
+        echo "[rollback] FATAL: data swap failed; restored original data dir" >&2
+        exit 1
+      fi
       echo "[rollback] data replaced atomically from $SNAP (old data at $O, via docker)"
     '
   fi

@@ -440,16 +440,20 @@ def persona(state, spoken=False):
 
 # ------------------------------------------------- sovereign runtime helpers
 
-_MODELS_CACHE = {"t": 0.0, "models": None}
+_MODELS_CACHE = {"t": 0.0, "models": None, "provider": None}
 
 def provider_models():
     """Live model ids for the configured OpenAI-compatible provider, cached 10 min.
     Returns None when no compatible provider is configured or none was ever read.
     Never raises: model availability must be verified or reported, not assumed."""
     base = (CONFIG.get("base_url") or "").strip().rstrip("/")
-    if not base or not CONFIG.get("anthropic_key"):
+    key = CONFIG.get("anthropic_key") or ""
+    if not base or not key:
         return None
-    if time.time() - _MODELS_CACHE["t"] < 600:
+    # cache is keyed by provider identity: a config/key change must never be
+    # served the previous provider's model list
+    provider = (base, hashlib.sha256(key.encode()).hexdigest())
+    if _MODELS_CACHE["provider"] == provider and time.time() - _MODELS_CACHE["t"] < 600:
         return _MODELS_CACHE["models"]
     try:
         req = urllib.request.Request(
@@ -458,7 +462,7 @@ def provider_models():
         with urllib.request.urlopen(req, timeout=5) as r:
             data = json.load(r)
         ids = sorted(str(m.get("id")) for m in data.get("data", []) if m.get("id"))
-        _MODELS_CACHE.update(t=time.time(), models=ids)
+        _MODELS_CACHE.update(t=time.time(), models=ids, provider=provider)
     except Exception:
         _MODELS_CACHE["t"] = time.time()   # back off; keep any stale list
     return _MODELS_CACHE["models"]
@@ -547,20 +551,20 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"function ck(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):''}"
     b"function sameOrigin(u){try{return new URL(u,location.href).origin===location.origin}catch(e){return false}}"
     b"function el(t,txt,style){var d=document.createElement(t);if(txt!=null)d.textContent=txt;if(style)d.style.cssText=style;return d}"
-    b"function approve(need,payloadText,retry){"
+    b"function approve(need,payloadText,retry,deny){"
     # modal: every field rendered text-safe via textContent, full payload, per-request
     b"var d=el('div',null,'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:monospace');"
     b"var c=el('div',null,'background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:520px;border-radius:8px;max-height:80vh;overflow:auto');"
     b"c.appendChild(el('b','BARS - HUMAN APPROVAL REQUIRED','color:#f59e0b'));"
     b"var tb=el('table',null,'font-size:12px;line-height:1.6;margin-top:12px');"
-    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Worst-case cost (estimate, enforced cap)','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']."
+    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Worst-case cost (estimate, enforced cap)','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']]."
     b"forEach(function(r){var tr=el('tr');var k=el('td',r[0],null);k.style.fontWeight='bold';k.style.textAlign='right';k.style.paddingRight='8px';"
     b"tr.appendChild(k);tr.appendChild(el('td',r[1]||''));tb.appendChild(tr)});c.appendChild(tb);"
     b"c.appendChild(el('div','Exact payload:','font-weight:bold;margin-top:10px'));"
     b"c.appendChild(el('pre',payloadText,'background:#000;border:1px solid #333;padding:8px;max-height:200px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all'));"
     b"var okb=el('button','APPROVE + RUN','background:#f59e0b;color:#000;padding:8px 14px;margin:14px 10px 0 0;cursor:pointer;border:0;border-radius:4px;font-weight:bold');"
     b"var nob=el('button','DENY','background:#333;color:#eee;padding:8px 14px;margin-top:14px;cursor:pointer;border:1px solid #666;border-radius:4px');"
-    b"nob.onclick=function(){d.remove()};"
+    b"nob.onclick=function(){d.remove();if(deny)deny()};"
     b"okb.onclick=function(){okb.disabled=true;okb.textContent='RUNNING...';retry().finally(function(){d.remove()})};"
     b"c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d)}"
     b"function mintAndRun(action,payload,recipient,exec){"
@@ -590,15 +594,15 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var bind=j.need_confirmation.bind_payload||payloadObj;"
     b"approve(j.need_confirmation,JSON.stringify(bind,null,2),function(){"
     b"return mintAndRun(j.need_confirmation.action,bind,p,{u:url,m:m,h:h,b:o.body})"
-    b".then(function(r2){resolve(r2||r)})})})}"
+    b".then(function(r2){resolve(r2||r)})},function(){resolve(r)})})}"
     b"return r})}"
     b"if(r.ok&&same&&(p==='/chat'||p==='/see')){return r.clone().json().then(function(j){"
     # generated mission: separate displayed confirmation, full payload shown
-    b"if(j&&j.deployed&&j.deployed.proposed){return new Promise(function(resolve){"
+    b"if(j&&j.deployed&&j.deployed.proposed){return new Promise(function(resolve){var mbind=Object.assign({},payloadObj,{brief:j.deployed.brief});"
     b"approve({action:'mission.exec',policy:'run a mission (spends model tokens)',recipient:'/brief',cost_bound:8192,ttl_seconds:120},"
-    b"JSON.stringify({brief:j.deployed.brief},null,2),function(){"
-    b"return mintAndRun('mission.exec',{brief:j.deployed.brief},'/brief',{u:'/brief',m:'POST',h:{'content-type':'application/json'},b:JSON.stringify({brief:j.deployed.brief})})"
-    b".then(function(){resolve(r)})})})}"
+    b"JSON.stringify(mbind,null,2),function(){"
+    b"return mintAndRun('mission.exec',mbind,'/brief',{u:'/brief',m:'POST',h:{'content-type':'application/json'},b:JSON.stringify(mbind)})"
+    b".then(function(){resolve(r)})},function(){resolve(r)})})}"
     b"return r}).catch(function(){return r})}"
     b"return r})}})();</script>")
 
@@ -2050,7 +2054,11 @@ def tts_bytes(text):
     if CONFIG["el_key"] and not CONFIG.get("el_voice"):
         CONFIG["el_voice"] = "CwhRBWXzGAHq8TQ4Fs17"
     t = speakable(text)
-    if CONFIG["el_key"] and CONFIG["el_voice"]:
+    # paid lane fail-closed like _paid_gate: ElevenLabs spends money, so it runs
+    # ONLY when explicitly enabled. The free Groq lane and browser fallback are
+    # unaffected - media stays confirmation-gated, not silently paid.
+    paid_ok = os.environ.get("BARS_ALLOW_PAID") == "1"
+    if paid_ok and CONFIG["el_key"] and CONFIG["el_voice"]:
         # [sighs]-style tags → try the expressive v3 model; fall back to turbo w/o tags
         if AUDIO_TAG.search(t):
             try:
