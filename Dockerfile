@@ -1,5 +1,7 @@
 # BARS sovereign runtime — stdlib-only Python server, no pip installs required.
-FROM python:3.12-slim
+# digest-pinned official base (multi-arch index incl. linux/amd64; verified
+# against registry-1.docker.io and the VPS daemon on 2026-09-10)
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

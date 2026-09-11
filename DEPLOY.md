@@ -69,6 +69,11 @@ is in the PR body.
 /opt/bars/app/deploy/rollback.sh --with-data # also restore pre-deploy data snapshot
 ```
 
+A FAILED rollback leaves the attempted previous image RUNNING for operator
+investigation and rewrites NO bookkeeping (current.sha/previous.sha/snapshot
+links stay as they were, and the `current` tag is restored to the abandoned
+image). Investigate `/health` and container logs before retrying.
+
 Both scripts are health-gated and use docker-compose.yml as the single source
 of hardening (read-only rootfs, tmpfs /tmp, no-new-privileges, cap_drop ALL,
 non-root uid 10001, mem/cpu/pids caps). The running SHA is recorded in

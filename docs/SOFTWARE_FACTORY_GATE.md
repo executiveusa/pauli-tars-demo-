@@ -4,7 +4,7 @@ Every candidate build in the Software Factory (BARS/TARS included) passes TWO
 independent gates before anything ships. The builder never self-approves.
 
 1. **Open Code Review flow** (repository-defined, from
-   `executiveusa/open-code-review` @ 22af4cb62c97959276055f3b3d977d7aa993adef,
+   `executiveusa/open-code-review` reusable workflow @ 082d72db1398adde532832fa80392b60d074fcf2 (internal action pinned @ 22af4cb62c97959276055f3b3d977d7aa993adef),
    installed via its own `scripts/install-vibe-review.mjs`):
    - Agent skill `vibe-project-review` (`.agents/`, `.claude/`, `.codex/`,
      `.cursor/`, `.github/skills/`): review contract = MODE / OUTCOME / TARGET /
@@ -13,7 +13,7 @@ independent gates before anything ships. The builder never self-approves.
      PASS, PASS WITH DISPOSITIONS, BLOCKED, NOT RUN.
    - Managed `VIBE_REVIEW` block in `AGENTS.md` (markers VIBE_REVIEW:START/END).
    - Independent CI: `.github/workflows/vibe-code-review.yml` calls the central
-     reusable workflow `executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@22af4cb62c97959276055f3b3d977d7aa993adef` (SHA-pinned, never a floating branch)
+     reusable workflow `executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@082d72db1398adde532832fa80392b60d074fcf2` (SHA-pinned, never a floating branch). The pin is two levels deep: at 082d72d the reusable workflow's internal action call is itself pinned to `executiveusa/open-code-review@22af4cb62c97959276055f3b3d977d7aa993adef`, whose action content is byte-identical to what the floating `@main` resolved to at pin time, so behavior is unchanged and frozen. Third-party actions used by other upstream workflows (actions/checkout@v4 etc.) are outside the called review path and remain an INFO residual, not a full supply-chain pin of the whole upstream repo.
      on every non-draft PR. Policy in `.opencodereview/rule.json` (correctness,
      security, data loss, secret exposure, rollback, tests-proving-behavior;
      "Do not approve a builder's own work").

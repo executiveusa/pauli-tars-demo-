@@ -2604,16 +2604,19 @@ class Handler(BaseHTTPRequestHandler):
             sq = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if sq or data.get("squad"):
                 core = (sq.group(1).strip() if sq else brief) or brief
-                # the split call itself spends toward the approved aggregate
-                _cap_register("presplit", _approved_bound)
-                _COST_CAP.mission = "presplit"
+                # the split call itself spends toward the approved aggregate;
+                # the key is UNIQUE per request: concurrent squad confirmations
+                # can never reset or release one another's shown-bound accounting
+                _pkey = "presplit:" + os.urandom(6).hex()
+                _cap_register(_pkey, _approved_bound)
+                _COST_CAP.mission = _pkey
                 try:
                     subs = squad_split(core)
                 except Exception as e:
                     self._json({"error": "squad split failed: " + str(e)[:120]}, 500); return
                 finally:
                     _COST_CAP.mission = None
-                    _cap_release("presplit")
+                    _cap_release(_pkey)
                 if data.get("plan"):                       # dry-run: show the split only
                     self._json({"plan": subs}); return
                 pid = start_squad(core, subs, cost_bound=_approved_bound)

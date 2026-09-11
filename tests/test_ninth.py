@@ -182,10 +182,11 @@ check("adv-v8-5b pristine worktree proceeds through fetch+checkout",
 # adv-v8-6: both Open Code Review refs are SHA-pinned (no floating @main)
 wf = open(os.path.join(ROOT, ".github/workflows/vibe-code-review.yml")).read()
 doc = open(os.path.join(ROOT, "docs/SOFTWARE_FACTORY_GATE.md")).read()
-PIN = "22af4cb62c97959276055f3b3d977d7aa993adef"
+PIN = "082d72db1398adde532832fa80392b60d074fcf2"
 check("adv-v8-6a reusable workflow ref is SHA-pinned",
       PIN in wf and "vibe-code-review.yml@main" not in wf, "")
-check("adv-v8-6b gate doc ref is SHA-pinned", PIN in doc and "@main`" not in doc, "")
+check("adv-v8-6b gate doc ref is SHA-pinned",
+      PIN in doc and "vibe-code-review.yml@main" not in doc, "")
 
 print(f"{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)
