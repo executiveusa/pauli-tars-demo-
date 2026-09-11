@@ -31,7 +31,7 @@ BARS combines a 3D interactive character, voice/chat, background missions, compu
 | What | Why | Required? |
 |---|---|---:|
 | **Python 3.10+** | Runs the local/server runtime | Yes |
-| **Anthropic API key or OpenRouter-compatible route** | Conversational/reasoning brain | Yes for current runtime |
+| **Groq API token or OpenRouter-compatible route** | Conversational/reasoning brain (free-first routing; paid escalation off unless explicitly enabled) | Yes for current runtime |
 | **Claude Code CLI** (`claude`) | Powers some background missions | Recommended |
 | OpenAI API key | Live voice + dictation | Optional |
 | ElevenLabs API key | Premium voice | Optional |
@@ -72,11 +72,43 @@ pip install pyobjc-core pyobjc-framework-Quartz
 - Computer takeover always asks permission before driving the real mouse/keyboard.
 - Trail Mixx controls will appear as a dedicated body/touch surface once the adapter is connected and verified.
 
-## Safety defaults
+## Safety and trust model
 
 BARS is draft-safe by default. Outward actions such as sending, posting, publishing, pushing code, spending money, or taking over the computer require the appropriate confirmation boundary. The red stop/abort control must remain available during computer-use actions.
 
+- **Fail-closed operator auth.** Every API call needs the `BARS_OPERATOR_TOKEN` bearer token. The server refuses to start without it (`BARS_OPEN_LOCAL=1` exists for local development only).
+- **Single-use confirmations.** Sensitive actions mint a short-lived confirmation that binds the exact action, a hash of the exact payload, the target, and a displayed worst-case token bound. The executing endpoint re-hashes what it was asked to run, so nothing can be swapped between review and execution. Confirmations are bound to the principal that minted them and burn on use.
+- **Displayed bound = enforced bound.** The token bound shown at approval time is registered as an aggregate cap on the mission and enforced with atomic reservations; a call that would exceed it fails closed. This holds for `/brief`, `/act`, squads (split and children share one bound), and follow-up missions.
+- **Free-first routing, paid fail-closed.** The default model lane is a free provider. Paid escalation stays off unless explicitly enabled, and every paid or voice call is confirmation-gated with an atomic budget hold.
+- **Truthful aborts.** Aborting a mission always reaches a persisted terminal state (ABORTED), whether the abort lands before, during, or after a model call, and a dead mission's cost cap is released. A squad child can never release the shared parent cap.
+- **Isolated internal worker.** On hosts without the coding CLI, missions run in a provider-only worker with no shell, no file writes outside the mission report, and no external tools.
+
 Never commit production secrets. `config.json` and generated local tokens/state are local runtime data.
+
+## Sovereign deployment
+
+The authoritative BARS agent runs as an exact-SHA Docker deployment behind Caddy on the VPS (see `DEPLOY.md`). The Netlify site stays a static visual reference only; it is not a backend.
+
+- **Immutable identity.** Images are tagged with the full 40-character git SHA and carry that SHA baked in at build time. `/health` reports the exact running SHA, and deploys and rollbacks verify it before going live. No mutable tags, no env-echo identity.
+- **Reversible deploys.** `deploy/rollback.sh` restores the previous exact image only after health verifies the restored SHA, and `--with-data` restores the deployment-linked data snapshot (taken through a root helper when the host user cannot read container-written state). Deploy bookkeeping is intentionally non-transactional: rollback is the transaction.
+- **Durable state.** Missions, receipts, dials, and configuration live on a host volume (`/opt/bars/data`), never in the image.
+
+## Verification and release gate
+
+- **Test ledger.** 245 behavioral assertions across versioned adversarial suites in `tests/`, runnable locally with `tests/run_all.sh`. Suites prove behavior (live server, mock provider, real Docker), not source-string presence.
+- **Real-Docker CI.** Every push runs the deploy/rollback suite on an ephemeral GitHub-hosted runner with no repo secrets (`.github/workflows/docker-integration.yml`), covering snapshot fallback on unreadable host data, failed-health rollback bookkeeping, and full data rollback. The workflow publishes sha256 hashes of the raw evidence into the public run log and check summary, and the committed receipts in `docs/evidence/` are byte-identical to the CI artifact.
+- **Independent review.** SHIP requires both the repository gate and a review the builder does not control (`docs/SOFTWARE_FACTORY_GATE.md`). The CI review policy is centrally pinned inside the SHA-pinned review action; a candidate-checked-out policy file never governs review and is forbidden in this repo.
+- **Current status.** The frozen candidate on `fix/bars-sovereign-runtime` passed fourteen rounds of adversarial and independent outside review. Full release remains HOLD until the PR is opened and the mandatory Open Code Review CI run passes on the exact final candidate. Nothing is merged or deployed from this branch.
+
+## Environment variables
+
+| Variable | Why | Required? |
+|---|---|---:|
+| `BARS_OPERATOR_TOKEN` | Bearer token for every API call | Yes (server refuses to start without it) |
+| `BARS_OPEN_LOCAL=1` | Local development without a token | Dev only |
+| `BARS_DATA_DIR` | Durable state directory | Default: repo root locally, `/data` in the container |
+| `GROQ_API_TOKEN` | Free default model lane | Yes for the default brain |
+| `BARS_ALLOWED_ORIGINS` | Cross-origin browser callers | Production only |
 
 ## Fleet role
 
