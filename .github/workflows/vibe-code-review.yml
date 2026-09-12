@@ -17,7 +17,7 @@ permissions:
 jobs:
   review:
     if: github.event.pull_request.draft == false
-    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
+    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@2fab76c0695d83d3ddb71be8ae4bc7e498a9137c   # re-pinned: same pinned tree + timeout-minutes 30->180 (branch fix/job-timeout-180)
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
       llm_url: https://openrouter.ai/api/v1/chat/completions
