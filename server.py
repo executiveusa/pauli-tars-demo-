@@ -70,6 +70,11 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
                           (MEMORY_PATH, LEGACY_MEMORY_PATH),
                           (DUPLEX_PATH, LEGACY_DUPLEX_PATH)):
     _migrate_legacy_file(_primary, _legacy)
+
+# ------------------------------------------------- structured memory v2
+import memory_store as memv2
+memv2.init(DATA)
+memv2.migrate_flat(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH))
 PORT = int(os.environ.get("BARS_PORT", "4321"))
 DUPLEX_PORT = int(os.environ.get("BARS_DUPLEX_PORT", "4323"))
 BIND = os.environ.get("BARS_BIND", "127.0.0.1")
@@ -307,13 +312,24 @@ DUPLEX_TOKEN = duplex_token()
 
 MEM_LOCK = threading.Lock()
 
-def remember(text):
+def remember(text, provenance="stated", source="remember"):
+    """One provenance-tagged fact in the structured store; the flat file stays
+    as a human-readable mirror for legacy readers."""
+    memv2.add_fact(text, provenance=provenance, source=source)
     line = f"- [{time.strftime('%Y-%m-%d')}] {text.strip()}\n"
     with MEM_LOCK:
         with open(MEMORY_PATH, "a") as f:
             f.write(line)
 
-def mem_block():
+def mem_block(query=None):
+    """Query-aware retrieval over the structured memory store. Falls back to
+    the legacy flat tail only while the store has no facts."""
+    try:
+        block = memv2.facts_block(query or "", budget=2000)
+        if block:
+            return block
+    except Exception:
+        pass
     try:
         with open(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH)) as f:
             tail = f.read()[-2500:]
@@ -2290,6 +2306,27 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._need_auth()
             return
+        if path == "/api/memory/recall":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                limit = max(1, min(50, int((q.get("limit") or ["6"])[0])))
+            except ValueError:
+                limit = 6
+            self._json({"facts": memv2.recall((q.get("q") or [""])[0],
+                                              limit=limit, bump=False)})
+            return
+        if path == "/api/memory/transcript":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            sess = (q.get("session") or ["default"])[0]
+            try:
+                limit = max(1, min(100, int((q.get("limit") or ["16"])[0])))
+            except ValueError:
+                limit = 16
+            self._json({"session": sess, "turns": memv2.transcript(sess, limit),
+                        "sessions": memv2.sessions()})
+            return
         if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html"):
             # the visual BARS cockpit is the primary interface at / and /agent/;
             # the newer front-door experience stays available at /frontdoor/.
@@ -2515,9 +2552,19 @@ class Handler(BaseHTTPRequestHandler):
             # conversational inference itself needs a separate approved policy.
             if PAID_MODE and not self._need_confirmation("chat.exec", data, recipient="/chat"):
                 return
+            session = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("session") or ""))[:40] or "default"
             history = data.get("history") or []
-            msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
-                    for h in history[-8:] if h.get("role") in ("user", "assistant")]
+            client_hist = [{"role": h["role"], "content": str(h["content"])[:2000]}
+                           for h in history[-8:] if h.get("role") in ("user", "assistant")]
+            prior = memv2.transcript(session, 8)
+            if not prior and client_hist:
+                # first contact for this session: adopt the client-supplied
+                # history into the server-side transcript once
+                for h in client_hist:
+                    memv2.append_turn(session, h["role"], h["content"])
+                prior = memv2.transcript(session, 8)
+            memv2.append_turn(session, "user", text)
+            msgs = [{"role": t["role"], "content": t["content"]} for t in prior]
             msgs.append({"role": "user", "content": text})
             # BARS AUTO-ROUTER: trim esc_proto for simple chat (saves 2000 tokens, 15s latency)
             # Only include deployment/tool instructions when the message needs them
@@ -2563,7 +2610,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 esc_proto = " Reply concisely."  # minimal instruction for simple chat
             try:
-                reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block()
+                reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block(text)
                                        + jobs_block() + tools_block(),
                                        msgs, max_tokens=450, user_message=text)
                 deployed = pending = tool = takeover = None
@@ -2605,8 +2652,10 @@ class Handler(BaseHTTPRequestHandler):
                         nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", reply)
                         deployed = {"proposed": True, "brief": brief,
                                     "agent": nm.group(1) if nm else None}
+                memv2.append_turn(session, "assistant", reply.strip())
                 self._json({
                     "reply": reply.strip(),
+                    "session": session,
                     "deployed": deployed,
                     "pending": pending,
                     "tool": tool,
@@ -2739,7 +2788,12 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()[:500]
             if not text:
                 self._json({"error": "empty"}, 400); return
-            remember(text)
+            prov = str(data.get("provenance") or "stated").strip().lower()
+            if prov not in memv2.PROVENANCE:
+                self._json({"error": "provenance must be one of "
+                            f"{list(memv2.PROVENANCE)}"}, 400)
+                return
+            remember(text, provenance=prov, source="remember")
             self._json({"ok": True, "reply": "Logged. I don't forget — feature, not a promise."})
 
         elif path == "/see":
