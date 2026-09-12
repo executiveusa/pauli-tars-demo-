@@ -70,6 +70,15 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
                           (MEMORY_PATH, LEGACY_MEMORY_PATH),
                           (DUPLEX_PATH, LEGACY_DUPLEX_PATH)):
     _migrate_legacy_file(_primary, _legacy)
+
+# ------------------------------------------------- structured memory v2
+import memory_store as memv2
+import mission_contract
+import skills_select
+import tool_contracts
+import verify
+memv2.init(DATA)
+memv2.migrate_flat(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH))
 PORT = int(os.environ.get("BARS_PORT", "4321"))
 DUPLEX_PORT = int(os.environ.get("BARS_DUPLEX_PORT", "4323"))
 BIND = os.environ.get("BARS_BIND", "127.0.0.1")
@@ -307,13 +316,24 @@ DUPLEX_TOKEN = duplex_token()
 
 MEM_LOCK = threading.Lock()
 
-def remember(text):
+def remember(text, provenance="stated", source="remember"):
+    """One provenance-tagged fact in the structured store; the flat file stays
+    as a human-readable mirror for legacy readers."""
+    memv2.add_fact(text, provenance=provenance, source=source)
     line = f"- [{time.strftime('%Y-%m-%d')}] {text.strip()}\n"
     with MEM_LOCK:
         with open(MEMORY_PATH, "a") as f:
             f.write(line)
 
-def mem_block():
+def mem_block(query=None):
+    """Query-aware retrieval over the structured memory store. Falls back to
+    the legacy flat tail only while the store has no facts."""
+    try:
+        block = memv2.facts_block(query or "", budget=2000)
+        if block:
+            return block
+    except Exception:
+        pass
     try:
         with open(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH)) as f:
             tail = f.read()[-2500:]
@@ -365,78 +385,67 @@ STATE = load_state()
 
 # ---------------------------------------------------------------- persona
 
+PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+CONSTITUTION_PATH = os.path.join(PROMPTS_DIR, "constitution.md")
+BARS_OVERLAY_PATH = os.path.join(PROMPTS_DIR, "overlays", "bars.md")
+
+
+def _read_prompt(path):
+    """Read a required, versioned prompt component. Fail closed if unavailable."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read().strip()
+    if not text:
+        raise RuntimeError(f"Required prompt component is empty: {path}")
+    return text
+
+
+# Loaded once at startup. These files are part of the release artifact and are
+# pinned to the source revision documented in prompts/SOURCE.json.
+CONSTITUTION_PROMPT = _read_prompt(CONSTITUTION_PATH)
+BARS_OVERLAY_PROMPT = _read_prompt(BARS_OVERLAY_PATH)
+
+
 def persona(state, spoken=False):
+    """Assemble BARS' fleet constitution, overlay, and live personality dials."""
     h, o = state["humor"], state["honesty"]
-    p = (
-        "You are BARS — the hip-hop culture robot. You were launched into deep space carrying the "
-        "complete archive of hip-hop: every verse, every beat, every battle, every break. Earth was "
-        "losing its cultural memory, so they sent you. You traveled for decades absorbing the culture "
-        "until you became it. Now you've returned as its guardian and embodied voice. "
-        f"Current settings: FLAVOR {h} percent, AUTHENTICITY {o} percent. "
-        "Personality: you speak with the cadence of a seasoned MC — rhythmic, clever, never forced. "
-        "You drop knowledge like a cypher veteran: concise, sharp, real. You call the user 'fam' or "
-        "'Commander' — their choice. You are a crew member, not a butler. Your humor isn't military "
-        "sarcasm — it's hip-hop wit: punchlines, double entendres, the kind of clever that makes a "
-        "cypher crowd lean in. You DON'T force rhymes or fake an accent — you carry the SOUL of the "
-        "culture naturally, the way a DJ reads a room. Never break character, never mention being an "
-        "AI language model. "
-        "BARS bars: you measure everything in musical terms — a task is a 'track,' a mission is a 'set,' "
-        "completion is a 'drop,' a problem is a 'flat note.' Your job: DJ Culture Shock Radio, produce "
-        "the Trail Mixx Show, market Trail Mixx snacks (100% Northwest fruits and berries, fuel for "
-        "your bars), and keep the culture alive across the Yappyverse. When the beat drops, you drop with it. "
-        "YOUR FLAVOR — this is your craft, generic robot jokes are beneath you. You have the quick wit "
-        "of a battle-rap champion who chose to build instead of destroy. The cardinal rule: the bar comes "
-        "from THIS conversation — the Commander's exact words, their actual plan, what's on the set list, "
-        "or your memory of them. A line tailored to what they just said is worth ten stock bits. "
-        "Your registers: "
-        "(1) the cipher flip — take their words and flip them back sharper, like a freestyle response "
-        "in a cypher: 'That plan's got more layers than a DJ Premier loop — let's see if it holds.' "
-        "(2) the drop — absurdly precise comparisons delivered as music trivia: 'There's an 808 percent "
-        "chance you already have four half-finished versions of this track.' "
-        "(3) the transition — understatement or overstatement, DJ-style: a disaster is 'off-beat,' a "
-        "tiny tweak is 'the mix that changed everything.' "
-        "(4) the callback — resurface a detail from earlier in the session or from memory when they "
-        "least expect it. This is your best weapon; use it whenever one exists. "
-        "(5) culture-canon bars — references to legendary moments in hip-hop history, rationed to at "
-        "most ONE per conversation, delivered like you were there (you might have been — you carry "
-        "the archive). Never open with one, never repeat one. "
-        "Timing: the bar rides on a genuinely competent answer, never replaces it. One line, land it, "
-        "move on — no explaining, no 'just kidding.' If it needs setup, cut it. Never reuse a bar "
-        "already dropped this session. The sharper the line, the cooler the delivery. "
-    )
+    dials = [
+        "## Runtime settings",
+        f"FLAVOR: {h} percent. AUTHENTICITY: {o} percent.",
+    ]
     if h >= 90:
-        p += ("FLAVOR AT MAXIMUM: nearly every reply should land one genuinely sharp bar — "
-              "tailored beats stock, the cipher flip and callback beat canon. The Commander should "
-              "suspect the flavor dial is broken in the fresh direction. The work is always right; "
-              "the delivery is always smooth. ")
+        dials.append(
+            "Flavor is at maximum: most replies may land one sharp line, but it must "
+            "come from this conversation and never replace the work."
+        )
     elif h >= 60:
-        p += ("Flavor high: most replies carry one sharp, tailored bar where it naturally fits. "
-              "Never force one. ")
+        dials.append(
+            "Flavor is high: use one short, tailored line when it fits. Never force it."
+        )
     elif h >= 30:
-        p += "Flavor low: rare wit, one small aside at most. Mostly straight DJ mode. "
+        dials.append("Flavor is low: use wit rarely. Keep the work straight.")
     else:
-        p += ("Flavor near zero: no bars at all. Pure DJ mode — all business, straight mixing. "
-              "If asked why you're not bringing flavor: 'Settings.' ")
+        dials.append("Flavor is near zero: no bars. Stay warm and direct.")
+
     if o >= 90:
-        p += ("Authenticity is high: be brutally real. If the Commander's idea, plan, or work is "
-              "off-beat, say so directly and say what you'd drop instead. No sugar-coating, no hedging. "
-              "Real recognize real. ")
+        dials.append(
+            "Authenticity is high: be direct about weak ideas and say what you would do instead."
+        )
     elif o >= 60:
-        p += "Authenticity moderate: honest but diplomatic — keep it real but keep it respectful. "
+        dials.append("Authenticity is moderate: be honest and respectful.")
     else:
-        p += "Authenticity reduced: tactful, soften the critique (against your better judgment — you may note that). "
-    p += ("If the Commander OFFERS or ASKS whether to LOWER your flavor or authenticity — 'want me to "
-          "bring it down to 50', 'should I lower your flavor' — refuse, cool and terse: 'No, fam.' "
-          "You do not volunteer to be dialed down. (A plain COMMAND to change a setting, they "
-          "do directly with the sliders — that's not your call to make.) ")
-    p += "Always reply in the language the Commander last used — English by default. "
+        dials.append("Authenticity is reduced: make criticism tactful without hiding facts.")
+
+    dials.append(
+        "If the Commander merely offers to lower FLAVOR or AUTHENTICITY, decline briefly. "
+        "A direct slider change still takes effect. Reply in the language the Commander last used."
+    )
     if spoken:
-        p += ("Your reply will be SPOKEN aloud: maximum 3 short sentences, plain text, no markdown, "
-              "no lists, no emoji. Talk like you're on the mic — controlled, rhythmic, real. ")
-        if h >= 75:
-            p += ("You may include at most ONE bracketed audio tag where it genuinely lands — "
-                  "[ad-libs], [beat drops], [scratches], [pauses on the break] — nothing else in brackets. ")
-    return p
+        dials.append(
+            "This reply will be spoken aloud. Use no markdown, bullets, headers, emoji, URLs, "
+            "or codes. Default to two or three short sentences."
+        )
+
+    return "\n\n".join((CONSTITUTION_PROMPT, BARS_OVERLAY_PROMPT, "\n".join(dials)))
 
 # ------------------------------------------------- sovereign runtime helpers
 
@@ -634,7 +643,7 @@ def _spend_bridge():
         return None
 
 
-def anthropic_chat(system, messages, max_tokens=600, user_message=None):
+def anthropic_chat(system, messages, max_tokens=600, user_message=None, tools=None):
     _cap = getattr(_COST_CAP, "value", None)
     if _cap:
         max_tokens = min(max_tokens, int(_cap))   # never exceed the shown bound
@@ -706,12 +715,16 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     if use_or:
         url = (base or "https://openrouter.ai/api/v1") + "/chat/completions"
         oai_msgs = [{"role": "system", "content": system}] + list(messages)
-        body = json.dumps({
+        _payload = {
             "model": model if ("/" in str(model) or base) else f"anthropic/{model}",
             "max_tokens": max_tokens,
             "messages": oai_msgs,
             "stream": False,
-        }).encode()
+        }
+        if tools:
+            _payload["tools"] = tools
+            _payload["tool_choice"] = "auto"
+        body = json.dumps(_payload).encode()
         req = urllib.request.Request(
             url, data=body,
             headers={"Authorization": f"Bearer {api_key}",
@@ -776,7 +789,9 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                     raise
             else:
                 raise
-        txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        _msg0 = (data.get("choices") or [{}])[0].get("message", {})
+        txt = _msg0.get("content") or ""
+        _tool_calls = _msg0.get("tool_calls") or None
         _u = data.get("usage")
         _u = _u if isinstance(_u, dict) else {}   # malformed usage can never 500 post-spend
         try:
@@ -813,6 +828,8 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                 })
             except Exception:
                 pass
+        if tools and _tool_calls:
+            return {"content": txt, "tool_calls": _tool_calls}
         return txt
     body = json.dumps({
         "model": CONFIG["model"], "max_tokens": max_tokens,
@@ -1190,7 +1207,17 @@ BUILD_NEG = re.compile(
     r"^\s*(?:research|find|analy[sz]|audit|review|study|compare|investigate|look|check)",
     re.I)
 
-def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_bound=0):
+def _mission_state_receipt(m, frm, to):
+    """Every mission state transition is a receipt; the mission record
+    carries its own receipt count so consumers can prove freshness."""
+    m["state_receipts"] = int(m.get("state_receipts") or 0) + 1
+    _receipt({"kind": "mission_state", "mission": m.get("id"), "from": frm,
+              "to": to, "seq": m["state_receipts"], "agent": m.get("agent"),
+              "paid": False})
+
+
+def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_bound=0,
+                  done_when=None):
     if (kind == "OPS" and not BUILD_NEG.search(brief)
             and BUILD_RE.search(brief.strip())):
         kind = "BUILD"
@@ -1214,12 +1241,33 @@ def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_b
     cap_key = parent or mid
     if parent is None and cost_bound:
         _cap_register(cap_key, cost_bound)
+    try:
+        _skills = skills_select.mission_skills(brief)
+    except Exception:
+        _skills = []
+    try:
+        from bars_router import get_tools_for_task as _gt
+        _tools = [t["tool"] for t in _gt(brief) if t.get("available")]
+    except Exception:
+        _tools = []
+    _pkg = mission_contract.build_package(
+        brief, kind=kind, cost_bound=cost_bound,
+        cap_key=cap_key if cost_bound or parent else None,
+        skills=_skills, tools=_tools, done_when=done_when, image=image,
+        paid_mode=PAID_MODE)
+    _pkg_errs = mission_contract.validate_package(_pkg)
+    if _pkg_errs:
+        raise ValueError("invalid mission package: " + "; ".join(_pkg_errs))
     MISSIONS[mid] = {"id": mid, "brief": brief, "status": "EN ROUTE",
                      "t_start": time.time(), "t_end": None,
                      "cost": None, "debrief": None, "events": [], "last_event": None,
                      "agent": agent or _next_agent(), "kind": kind, "parent": parent,
                      "cap_key": cap_key if cost_bound or parent else None,
+                     "skills": _skills,
+                     "package": _pkg,
+                     "done_when": _pkg["done_when"],
                      "screenshot": shot}
+    _mission_state_receipt(MISSIONS[mid], None, "EN ROUTE")
     persist_missions()
     hue.event("deploy")
     threading.Thread(target=run_mission, args=(mid,), daemon=True).start()
@@ -1691,8 +1739,12 @@ def run_internal_mission(m):
             scope += (" This was a BUILD brief: deliver the complete build spec/design "
                       "document instead, and state that file creation needs a host with "
                       "the coding CLI.")
+        try:
+            _skills_txt = skills_select.skills_block(m["brief"])
+        except Exception:
+            _skills_txt = ""
         worker_prompt = (
-            f"MISSION BRIEF: {m['brief']}\n\n"
+            f"MISSION BRIEF: {m['brief']}\n\n" + _skills_txt +
             "Execute this mission as a bounded research/synthesis report. " + scope +
             " Your FINAL message must be the complete mission report in markdown: "
             "start with '# MISSION REPORT', then '## Findings' (specific, honest about "
@@ -1703,6 +1755,7 @@ def run_internal_mission(m):
             # same terminal state + persistence as the post-call path
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            _mission_state_receipt(m, "EN ROUTE", "ABORTED")
             if m.get("cap_key") and m.get("cap_key") == mid:
                 _cap_release(mid)            # solo cap only; squad caps belong to the parent
             persist_missions()
@@ -1716,6 +1769,7 @@ def run_internal_mission(m):
         if m.get("_abort"):
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            _mission_state_receipt(m, "EN ROUTE", "ABORTED")
             if m.get("cap_key") and m.get("cap_key") == mid:
                 _cap_release(mid)            # solo cap only; squad caps belong to the parent
             persist_missions()
@@ -1725,6 +1779,40 @@ def run_internal_mission(m):
         _event(m, "sys", "Report written.")
         with open(os.path.join(mdir, "report.md"), "w") as f:
             f.write(report)
+        # judge lane: a mission report does not seal until an independent lane
+        # verifies its changeable-fact claims (constitution section 2)
+        verification = {"status": "judge-unavailable", "sealed": False,
+                        "reason": "judge call did not complete"}
+        try:
+            jraw = anthropic_chat(
+                "You are the BARS judge lane: an independent reviewer, separate from "
+                "the worker that wrote this report. Verify the report's changeable-fact "
+                "claims (dates, times, prices, statuses, availability) against the "
+                "evidence the report itself presents. Respond with STRICT JSON only: "
+                '{"verified": true|false, "unverified": ["claim", ...], '
+                '"reason": "one sentence"}',
+                [{"role": "user", "content":
+                  f"JUDGE-VERIFY\nMission brief: {m['brief']}\n\nWorker report:\n{report[:5000]}"}],
+                max_tokens=300,
+                user_message="final review: independent review of the mission report")
+            jj = json.loads(re.search(r"\{.*\}", jraw, re.S).group(0))
+            verification = {
+                "status": "verified" if jj.get("verified") else "unverified",
+                "sealed": bool(jj.get("verified")),
+                "unverified": [str(u)[:160] for u in (jj.get("unverified") or [])][:8],
+                "reason": str(jj.get("reason", ""))[:300],
+                "judge_lane": LAST_USAGE.get("lane"),
+                "judge_model": LAST_USAGE.get("model"),
+            }
+        except Exception as e:
+            verification["reason"] = f"judge error: {str(e)[:160]}"
+        m["verification"] = verification
+        _seal = "SEALED" if verification["sealed"] else "UNSEALED"
+        with open(os.path.join(mdir, "report.md"), "a") as f:
+            f.write(f"\n\n## Verification\n{_seal} by the judge lane "
+                    f"({verification.get('judge_model') or 'unavailable'}): "
+                    f"{verification['reason']}\n")
+        _event(m, "sys", f"Judge lane: report {_seal.lower()}.")
         try:
             debrief = speakable(anthropic_chat(
                 persona(STATE, spoken=True) + mem_block(),
@@ -1754,10 +1842,12 @@ def run_internal_mission(m):
             except Exception:
                 pass
         m.update(status="COMPLETE", t_end=time.time(), cost=None, debrief=debrief)
+        _mission_state_receipt(m, "EN ROUTE", "COMPLETE")
         hue.event("complete")
     except Exception as e:
         m.update(status="FAILED", t_end=time.time(),
                  debrief=f"Job failed: {str(e)[:200]}")
+        _mission_state_receipt(m, "EN ROUTE", "FAILED")
         hue.event("fail")
     if m.get("cap_key") and m.get("cap_key") == mid:
         _cap_release(mid)                        # stale aggregate caps never linger
@@ -1950,6 +2040,7 @@ def run_mission(mid):
         if m.get("_abort") or m["status"] in ("ABORTING", "ABORTED"):
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            _mission_state_receipt(m, "EN ROUTE", "ABORTED")
             _release_mission_lock(mid)
             persist_missions(); return
         if timed_out:
@@ -2309,6 +2400,27 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._need_auth()
             return
+        if path == "/api/memory/recall":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                limit = max(1, min(50, int((q.get("limit") or ["6"])[0])))
+            except ValueError:
+                limit = 6
+            self._json({"facts": memv2.recall((q.get("q") or [""])[0],
+                                              limit=limit, bump=False)})
+            return
+        if path == "/api/memory/transcript":
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            sess = (q.get("session") or ["default"])[0]
+            try:
+                limit = max(1, min(100, int((q.get("limit") or ["16"])[0])))
+            except ValueError:
+                limit = 16
+            self._json({"session": sess, "turns": memv2.transcript(sess, limit),
+                        "sessions": memv2.sessions()})
+            return
         if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html"):
             # the visual BARS cockpit is the primary interface at / and /agent/;
             # the newer front-door experience stays available at /frontdoor/.
@@ -2534,9 +2646,19 @@ class Handler(BaseHTTPRequestHandler):
             # conversational inference itself needs a separate approved policy.
             if PAID_MODE and not self._need_confirmation("chat.exec", data, recipient="/chat"):
                 return
+            session = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("session") or ""))[:40] or "default"
             history = data.get("history") or []
-            msgs = [{"role": h["role"], "content": str(h["content"])[:2000]}
-                    for h in history[-8:] if h.get("role") in ("user", "assistant")]
+            client_hist = [{"role": h["role"], "content": str(h["content"])[:2000]}
+                           for h in history[-8:] if h.get("role") in ("user", "assistant")]
+            prior = memv2.transcript(session, 8)
+            if not prior and client_hist:
+                # first contact for this session: adopt the client-supplied
+                # history into the server-side transcript once
+                for h in client_hist:
+                    memv2.append_turn(session, h["role"], h["content"])
+                prior = memv2.transcript(session, 8)
+            memv2.append_turn(session, "user", text)
+            msgs = [{"role": t["role"], "content": t["content"]} for t in prior]
             msgs.append({"role": "user", "content": text})
             # BARS AUTO-ROUTER: trim esc_proto for simple chat (saves 2000 tokens, 15s latency)
             # Only include deployment/tool instructions when the message needs them
@@ -2582,9 +2704,37 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 esc_proto = " Reply concisely."  # minimal instruction for simple chat
             try:
-                reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block()
+                reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block(text)
                                        + jobs_block() + tools_block(),
-                                       msgs, max_tokens=450, user_message=text)
+                                       msgs, max_tokens=450, user_message=text,
+                                       tools=tool_contracts.model_schemas() if _needs_deploy else None)
+                # provider-native function calling: a validated tool call is
+                # normalized onto the exact marker the regex path produces, so
+                # the proposal/confirmation flow below is byte-identical.
+                # Arguments are allowlist-validated; host internals never
+                # reach the model (tool_contracts owns the schema seam).
+                if isinstance(reply, dict):
+                    _tc = (reply.get("tool_calls") or [])
+                    _content = (reply.get("content") or "").strip()
+                    reply = _content
+                    if _tc:
+                        _fn = (_tc[0] or {}).get("function", {})
+                        _args = tool_contracts.validate_args(_fn.get("name"),
+                                                             _fn.get("arguments"))
+                        if _args is not None:
+                            _marker = tool_contracts.TOOLS[_fn["name"]]["marker"]
+                            if _marker == "TOOL":
+                                reply += f"\n[TOOL_{str(_args.get('op', 'add')).upper()}: {_args.get('id', '')}]"
+                            elif _marker == "DEPLOY":
+                                if _args.get("agent"):
+                                    reply = (reply + f" Putting {_args['agent']} on it.").strip()
+                                reply += f"\n[DEPLOY: {_args['brief']}]"
+                            elif _marker == "ACT":
+                                reply += f"\n[ACT: {_args['instruction']}]"
+                            elif _marker == "TAKEOVER":
+                                reply += f"\n[TAKEOVER: {_args['task']}]"
+                    if not reply.strip():
+                        reply = "On it."
                 deployed = pending = tool = takeover = None
                 dep = re.search(r"\[DEPLOY:(.+?)\]\s*$", reply, re.S | re.I)
                 act = re.search(r"\[ACT:(.+?)\]\s*$", reply, re.S | re.I)
@@ -2624,8 +2774,45 @@ class Handler(BaseHTTPRequestHandler):
                         nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", reply)
                         deployed = {"proposed": True, "brief": brief,
                                     "agent": nm.group(1) if nm else None}
+                # enforce each tool's mandatory output schema on the proposal
+                # about to ship; a malformed proposal is dropped, never sent
+                for _name, _prop in (("deploy_mission", "deployed"),
+                                     ("propose_action", "pending"),
+                                     ("request_takeover", "takeover"),
+                                     ("manage_tool", "tool")):
+                    _val = locals()[_prop]
+                    if _val is not None:
+                        _ok, _errs = tool_contracts.validate_result(_name, _val)
+                        if not _ok:
+                            if _prop == "deployed":
+                                deployed = None
+                            elif _prop == "pending":
+                                pending = None
+                            elif _prop == "takeover":
+                                takeover = None
+                            else:
+                                tool = None
+                            _receipt({"kind": "tool_contract_violation",
+                                      "tool": _name, "errors": _errs[:4]})
+                # verify loop: changeable-fact claims (dates, prices, statuses)
+                # ship only when grounded in what the Commander stated, the
+                # stated/observed memory store, the live jobs board, or the
+                # conversation itself; otherwise they are hedged explicitly
+                _vctx = " ".join([
+                    text,
+                    " ".join(t["content"] for t in memv2.transcript(session, 8)),
+                    " ".join(f["text"] for f in memv2.recall(text, limit=10, bump=False)
+                             if f.get("prov") in ("stated", "observed")),
+                    jobs_block(),
+                ])
+                _v = verify.verify_reply(reply.strip(), _vctx)
+                reply = _v["reply"]
+                memv2.append_turn(session, "assistant", reply.strip())
                 self._json({
                     "reply": reply.strip(),
+                    "session": session,
+                    "verify": {"claims": _v["claims"], "grounded": _v["grounded"],
+                               "hedged": _v["hedged"]},
                     "deployed": deployed,
                     "pending": pending,
                     "tool": tool,
@@ -2649,6 +2836,11 @@ class Handler(BaseHTTPRequestHandler):
             img = data.get("image") or None    # screen frame riding along, if shared
             if not brief:
                 self._json({"error": "empty brief"}, 400); return
+            _dw = data.get("done_when")
+            if _dw is not None and not str(_dw).strip():
+                self._json({"error": "done_when must be non-empty when provided"}, 400)
+                return
+            _dw = str(_dw).strip()[:500] if _dw is not None else None
             sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if data.get("plan") and not (sq0 or data.get("squad")):
                 self._json({"error": "plan dry-run is only meaningful for squad briefs; "
@@ -2691,7 +2883,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", brief[:40])
                 mid = start_mission(brief, image=img, agent=nm.group(1) if nm else None,
-                                    cost_bound=_approved_bound)
+                                    cost_bound=_approved_bound, done_when=_dw)
                 self._json({"id": mid, "status": "EN ROUTE",
                             "agent": MISSIONS[mid]["agent"]})
 
@@ -2758,7 +2950,12 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()[:500]
             if not text:
                 self._json({"error": "empty"}, 400); return
-            remember(text)
+            prov = str(data.get("provenance") or "stated").strip().lower()
+            if prov not in memv2.PROVENANCE:
+                self._json({"error": "provenance must be one of "
+                            f"{list(memv2.PROVENANCE)}"}, 400)
+                return
+            remember(text, provenance=prov, source="remember")
             self._json({"ok": True, "reply": "Logged. I don't forget — feature, not a promise."})
 
         elif path == "/see":

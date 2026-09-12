@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 SERVER = (ROOT / "server.py").read_text(encoding="utf-8")
+OVERLAY = (ROOT / "prompts" / "overlays" / "bars.md").read_text(encoding="utf-8")
 
 failures: list[str] = []
 
@@ -34,8 +35,10 @@ if re.search(r"^#\s+TARS\b", README, re.M | re.I):
     failures.append("README still leads with TARS")
 if 'server_version = "BARS/' not in SERVER:
     failures.append("HTTP server does not identify as BARS")
-if 'You are BARS' not in SERVER:
-    failures.append("runtime persona is not BARS")
+if 'You are BARS' not in OVERLAY:
+    failures.append("runtime BARS overlay is not BARS")
+if 'CONSTITUTION_PROMPT, BARS_OVERLAY_PROMPT' not in SERVER:
+    failures.append("runtime does not assemble constitution before BARS overlay")
 
 # Legacy names are allowed only as explicit read-only migration fallbacks.
 allowed_legacy = {
