@@ -19,12 +19,16 @@ jobs:
     uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
-      model: google/gemma-4-26b-a4b-it:free   # verified free at runtime (cost $0, no top-up);
-                                         # non-reasoning, verdict-first. Upstream pool 429/503s
-                                         # in bursts - retried on a cadence until a window opens.
-                                         # Groq lane tried and ruled out: gpt-oss-120b org-shared
-                                         # daily cap exhausted; qwen3.x OTPM 1000 < tool max_tokens;
-                                         # gpt-oss-20b hidden reasoning eats output budget.
+      llm_url: https://api.groq.com/openai/v1/chat/completions   # Groq primary lane (live-verified 2026-09-11)
+      model: qwen/qwen3.6-27b   # PRIMARY: Groq qwen3.6-27b, OCR-explicit, 131K ctx, ~1000 RPD.
+                                # Free-lane fallback chain (hard stop at each lane's daily cap,
+                                # never burn a capped lane, no paid models):
+                                #   1. openrouter: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free (live $0 OCR pass 2026-09-11; top free tier 1000 req/day, 20 req/min)
+                                #   2. openrouter: google/gemma-4-31b-it:free (503s under load - retry window dependent)
+                                #   3. openrouter: nex-n2.5-pro:free (or openrouter/free auto-router)
+                                # Prior lanes ruled out on this repo: gemma-4-26b-a4b-it:free upstream
+                                # Google AI Studio BYOK 16K input-TPM cap bursts 429; Groq gpt-oss-120b
+                                # org-shared TPD exhausted; gpt-oss-20b hidden reasoning eats output budget.
       review_concurrency: "1"   # serial review keeps the burst under free-tier token/min caps
     secrets:
-      llm_token: ${{ secrets.OPENROUTER_API_KEY }}
+      llm_token: ${{ secrets.GROQ_API_KEY }}   # Groq lane key; switch back to OPENROUTER_API_KEY when falling back down the chain above
