@@ -20,19 +20,10 @@ jobs:
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
       llm_url: https://openrouter.ai/api/v1/chat/completions
-      model: google/gemma-4-31b-it:free   # FALLBACK 2: non-reasoning, fast; 503s under load (retry on cadence).
-                                # Chain (hard stop at each lane's daily cap, never burn a capped lane, no paid):
-                                #   3. nex-n2.5-pro:free (or openrouter/free auto-router)
-                                # Lanes ruled out on this repo:
-                                #   - OpenRouter nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free:
-                                #     reasoning model too slow - 2 attempts both cancelled at the 30-min
-                                #     job timeout (2026-09-12 06:12Z / 06:45Z), output buffered, no resume.
-                                #   - Groq qwen/qwen3.6-27b: structural - free on_demand OTPM 1000 <
-                                #     tool per-request output budget (1032-3644); TPM 8000 < 11040.
-                                #   - google/gemma-4-26b-a4b-it:free: upstream Google AI Studio BYOK
-                                #     16K input-TPM free cap bursts 429.
-                                #   - Groq gpt-oss-120b org-shared TPD exhausted; gpt-oss-20b hidden
-                                #     reasoning eats output budget.
+      model: nex-n2.5-pro:free   # FALLBACK 3: gemma-4-31b-it:free shared free pool saturated
+                                # (post-BYOK attempts 23-25 all 9/9 failed, limit_source
+                                # upstream_provider_shared_pool, 10:03-10:19 AM PDT 2026-09-12).
+                                # Next: openrouter/free auto-router.
       review_concurrency: "1"   # serial review keeps the burst under free-tier token/min caps
     secrets:
       llm_token: ${{ secrets.OPENROUTER_API_KEY }}   # OpenRouter lane key; Groq lanes use GROQ_API_KEY + Groq llm_url
