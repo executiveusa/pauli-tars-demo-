@@ -73,6 +73,7 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
 
 # ------------------------------------------------- structured memory v2
 import memory_store as memv2
+import verify
 memv2.init(DATA)
 memv2.migrate_flat(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH))
 PORT = int(os.environ.get("BARS_PORT", "4321"))
@@ -1726,6 +1727,40 @@ def run_internal_mission(m):
         _event(m, "sys", "Report written.")
         with open(os.path.join(mdir, "report.md"), "w") as f:
             f.write(report)
+        # judge lane: a mission report does not seal until an independent lane
+        # verifies its changeable-fact claims (constitution section 2)
+        verification = {"status": "judge-unavailable", "sealed": False,
+                        "reason": "judge call did not complete"}
+        try:
+            jraw = anthropic_chat(
+                "You are the BARS judge lane: an independent reviewer, separate from "
+                "the worker that wrote this report. Verify the report's changeable-fact "
+                "claims (dates, times, prices, statuses, availability) against the "
+                "evidence the report itself presents. Respond with STRICT JSON only: "
+                '{"verified": true|false, "unverified": ["claim", ...], '
+                '"reason": "one sentence"}',
+                [{"role": "user", "content":
+                  f"JUDGE-VERIFY\nMission brief: {m['brief']}\n\nWorker report:\n{report[:5000]}"}],
+                max_tokens=300,
+                user_message="final review: independent review of the mission report")
+            jj = json.loads(re.search(r"\{.*\}", jraw, re.S).group(0))
+            verification = {
+                "status": "verified" if jj.get("verified") else "unverified",
+                "sealed": bool(jj.get("verified")),
+                "unverified": [str(u)[:160] for u in (jj.get("unverified") or [])][:8],
+                "reason": str(jj.get("reason", ""))[:300],
+                "judge_lane": LAST_USAGE.get("lane"),
+                "judge_model": LAST_USAGE.get("model"),
+            }
+        except Exception as e:
+            verification["reason"] = f"judge error: {str(e)[:160]}"
+        m["verification"] = verification
+        _seal = "SEALED" if verification["sealed"] else "UNSEALED"
+        with open(os.path.join(mdir, "report.md"), "a") as f:
+            f.write(f"\n\n## Verification\n{_seal} by the judge lane "
+                    f"({verification.get('judge_model') or 'unavailable'}): "
+                    f"{verification['reason']}\n")
+        _event(m, "sys", f"Judge lane: report {_seal.lower()}.")
         try:
             debrief = speakable(anthropic_chat(
                 persona(STATE, spoken=True) + mem_block(),
@@ -2652,10 +2687,25 @@ class Handler(BaseHTTPRequestHandler):
                         nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", reply)
                         deployed = {"proposed": True, "brief": brief,
                                     "agent": nm.group(1) if nm else None}
+                # verify loop: changeable-fact claims (dates, prices, statuses)
+                # ship only when grounded in what the Commander stated, the
+                # stated/observed memory store, the live jobs board, or the
+                # conversation itself; otherwise they are hedged explicitly
+                _vctx = " ".join([
+                    text,
+                    " ".join(t["content"] for t in memv2.transcript(session, 8)),
+                    " ".join(f["text"] for f in memv2.recall(text, limit=10, bump=False)
+                             if f.get("prov") in ("stated", "observed")),
+                    jobs_block(),
+                ])
+                _v = verify.verify_reply(reply.strip(), _vctx)
+                reply = _v["reply"]
                 memv2.append_turn(session, "assistant", reply.strip())
                 self._json({
                     "reply": reply.strip(),
                     "session": session,
+                    "verify": {"claims": _v["claims"], "grounded": _v["grounded"],
+                               "hedged": _v["hedged"]},
                     "deployed": deployed,
                     "pending": pending,
                     "tool": tool,
