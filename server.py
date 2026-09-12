@@ -73,6 +73,7 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
 
 # ------------------------------------------------- structured memory v2
 import memory_store as memv2
+import tool_contracts
 import verify
 memv2.init(DATA)
 memv2.migrate_flat(_read_path(MEMORY_PATH, LEGACY_MEMORY_PATH))
@@ -636,7 +637,7 @@ def _spend_bridge():
         return None
 
 
-def anthropic_chat(system, messages, max_tokens=600, user_message=None):
+def anthropic_chat(system, messages, max_tokens=600, user_message=None, tools=None):
     _cap = getattr(_COST_CAP, "value", None)
     if _cap:
         max_tokens = min(max_tokens, int(_cap))   # never exceed the shown bound
@@ -708,12 +709,16 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
     if use_or:
         url = (base or "https://openrouter.ai/api/v1") + "/chat/completions"
         oai_msgs = [{"role": "system", "content": system}] + list(messages)
-        body = json.dumps({
+        _payload = {
             "model": model if ("/" in str(model) or base) else f"anthropic/{model}",
             "max_tokens": max_tokens,
             "messages": oai_msgs,
             "stream": False,
-        }).encode()
+        }
+        if tools:
+            _payload["tools"] = tools
+            _payload["tool_choice"] = "auto"
+        body = json.dumps(_payload).encode()
         req = urllib.request.Request(
             url, data=body,
             headers={"Authorization": f"Bearer {api_key}",
@@ -778,7 +783,9 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                     raise
             else:
                 raise
-        txt = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        _msg0 = (data.get("choices") or [{}])[0].get("message", {})
+        txt = _msg0.get("content") or ""
+        _tool_calls = _msg0.get("tool_calls") or None
         _u = data.get("usage")
         _u = _u if isinstance(_u, dict) else {}   # malformed usage can never 500 post-spend
         try:
@@ -815,6 +822,8 @@ def anthropic_chat(system, messages, max_tokens=600, user_message=None):
                 })
             except Exception:
                 pass
+        if tools and _tool_calls:
+            return {"content": txt, "tool_calls": _tool_calls}
         return txt
     body = json.dumps({
         "model": CONFIG["model"], "max_tokens": max_tokens,
@@ -2647,7 +2656,35 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 reply = anthropic_chat(persona(STATE, spoken=True) + esc_proto + mem_block(text)
                                        + jobs_block() + tools_block(),
-                                       msgs, max_tokens=450, user_message=text)
+                                       msgs, max_tokens=450, user_message=text,
+                                       tools=tool_contracts.model_schemas() if _needs_deploy else None)
+                # provider-native function calling: a validated tool call is
+                # normalized onto the exact marker the regex path produces, so
+                # the proposal/confirmation flow below is byte-identical.
+                # Arguments are allowlist-validated; host internals never
+                # reach the model (tool_contracts owns the schema seam).
+                if isinstance(reply, dict):
+                    _tc = (reply.get("tool_calls") or [])
+                    _content = (reply.get("content") or "").strip()
+                    reply = _content
+                    if _tc:
+                        _fn = (_tc[0] or {}).get("function", {})
+                        _args = tool_contracts.validate_args(_fn.get("name"),
+                                                             _fn.get("arguments"))
+                        if _args is not None:
+                            _marker = tool_contracts.TOOLS[_fn["name"]]["marker"]
+                            if _marker == "TOOL":
+                                reply += f"\n[TOOL_{str(_args.get('op', 'add')).upper()}: {_args.get('id', '')}]"
+                            elif _marker == "DEPLOY":
+                                if _args.get("agent"):
+                                    reply = (reply + f" Putting {_args['agent']} on it.").strip()
+                                reply += f"\n[DEPLOY: {_args['brief']}]"
+                            elif _marker == "ACT":
+                                reply += f"\n[ACT: {_args['instruction']}]"
+                            elif _marker == "TAKEOVER":
+                                reply += f"\n[TAKEOVER: {_args['task']}]"
+                    if not reply.strip():
+                        reply = "On it."
                 deployed = pending = tool = takeover = None
                 dep = re.search(r"\[DEPLOY:(.+?)\]\s*$", reply, re.S | re.I)
                 act = re.search(r"\[ACT:(.+?)\]\s*$", reply, re.S | re.I)
@@ -2687,6 +2724,26 @@ class Handler(BaseHTTPRequestHandler):
                         nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", reply)
                         deployed = {"proposed": True, "brief": brief,
                                     "agent": nm.group(1) if nm else None}
+                # enforce each tool's mandatory output schema on the proposal
+                # about to ship; a malformed proposal is dropped, never sent
+                for _name, _prop in (("deploy_mission", "deployed"),
+                                     ("propose_action", "pending"),
+                                     ("request_takeover", "takeover"),
+                                     ("manage_tool", "tool")):
+                    _val = locals()[_prop]
+                    if _val is not None:
+                        _ok, _errs = tool_contracts.validate_result(_name, _val)
+                        if not _ok:
+                            if _prop == "deployed":
+                                deployed = None
+                            elif _prop == "pending":
+                                pending = None
+                            elif _prop == "takeover":
+                                takeover = None
+                            else:
+                                tool = None
+                            _receipt({"kind": "tool_contract_violation",
+                                      "tool": _name, "errors": _errs[:4]})
                 # verify loop: changeable-fact claims (dates, prices, statuses)
                 # ship only when grounded in what the Commander stated, the
                 # stated/observed memory store, the live jobs board, or the
