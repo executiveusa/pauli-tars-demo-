@@ -16,7 +16,10 @@ static visual reference/fallback only — it is not a backend.
 1. Docker present (`docker --version`). Coolify optional — this path works
    with plain Docker; under Coolify, point it at this repo/branch and copy the
    same env + volume + port settings.
-2. `sudo mkdir -p /opt/bars/data /opt/bars/backups /opt/bars/logs`
+2. `sudo install -d -m 0755 -o 10001 -g 10001 /opt/bars/data /opt/bars/anchor` and
+   `sudo mkdir -p /opt/bars/backups /opt/bars/logs && sudo chmod 0700 /opt/bars/backups`
+   (the container runs as uid 10001: root-owned `data`/`anchor` dirs make the
+   first boot die with PermissionError; `deploy.sh` also self-provisions these)
 3. `/opt/bars/.env` from `.env.example` with real values from Infisical:
    - `GROQ_API_TOKEN` (Infisical HERMES, verified valid — NOT the expired
      `GROQ_API_KEY`)

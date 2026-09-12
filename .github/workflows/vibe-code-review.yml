@@ -5,6 +5,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+concurrency:
+  group: vibe-code-review-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -13,8 +17,15 @@ permissions:
 jobs:
   review:
     if: github.event.pull_request.draft == false
-    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@864933213372cc488b3f2f2b1deaab84ea91b855
+    uses: executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@2fab76c0695d83d3ddb71be8ae4bc7e498a9137c   # re-pinned: same pinned tree + timeout-minutes 30->180 (branch fix/job-timeout-180)
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
+      llm_url: https://openrouter.ai/api/v1/chat/completions
+      model: openrouter/free   # FALLBACK 4 (last approved lane): nex-n2.5-pro:free too slow -
+                               # 30-min job wall-clock timeout with ~2/9 items started
+                               # (run 34712690301 cancelled 12:27 PM PDT 2026-09-12), same
+                               # failure class as nemotron:free. Auto-router picks any free
+                               # capacity OpenRouter has. Chain exhausted after this lane.
+      review_concurrency: "1"   # serial review keeps the burst under free-tier token/min caps
     secrets:
-      llm_token: ${{ secrets.OPENROUTER_API_KEY }}
+      llm_token: ${{ secrets.OPENROUTER_API_KEY }}   # OpenRouter lane key; Groq lanes use GROQ_API_KEY + Groq llm_url
