@@ -1,0 +1,8 @@
+{
+  "repository": "executiveusa/pauli-starnet",
+  "revision": "930aa73bef69ac9a1d267f8c35f263414143c984",
+  "files": {
+    "prompts/constitution.md": "c94cabe5bf69b9bedf38a365813000668dc6656cb57f35f063f38b0a73654390",
+    "prompts/overlays/bars.md": "4181d1aab4c4a26a7da3e6ed53eec4c98a45cb6e567ef3ba1c993998a2c5d9e3"
+  }
+}

@@ -8,6 +8,7 @@ for t in test_bars test_security test_paid test_adversarial test_fourth test_fif
   pkill -f mock_provider.py 2>/dev/null || true; pkill -f "python3 server.py" 2>/dev/null || true; sleep 0.5
   python3 "tests/$t.py"
 done
+python3 tests/test_prompts.py
 python3 scripts/check_bars_identity.py
 python3 scripts/verify_frontdoor.py
 bash tests/test_deploy_docker.sh
