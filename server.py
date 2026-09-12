@@ -73,6 +73,7 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
 
 # ------------------------------------------------- structured memory v2
 import memory_store as memv2
+import mission_contract
 import skills_select
 import tool_contracts
 import verify
@@ -1202,7 +1203,17 @@ BUILD_NEG = re.compile(
     r"^\s*(?:research|find|analy[sz]|audit|review|study|compare|investigate|look|check)",
     re.I)
 
-def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_bound=0):
+def _mission_state_receipt(m, frm, to):
+    """Every mission state transition is a receipt; the mission record
+    carries its own receipt count so consumers can prove freshness."""
+    m["state_receipts"] = int(m.get("state_receipts") or 0) + 1
+    _receipt({"kind": "mission_state", "mission": m.get("id"), "from": frm,
+              "to": to, "seq": m["state_receipts"], "agent": m.get("agent"),
+              "paid": False})
+
+
+def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_bound=0,
+                  done_when=None):
     if (kind == "OPS" and not BUILD_NEG.search(brief)
             and BUILD_RE.search(brief.strip())):
         kind = "BUILD"
@@ -1230,13 +1241,29 @@ def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_b
         _skills = skills_select.mission_skills(brief)
     except Exception:
         _skills = []
+    try:
+        from bars_router import get_tools_for_task as _gt
+        _tools = [t["tool"] for t in _gt(brief) if t.get("available")]
+    except Exception:
+        _tools = []
+    _pkg = mission_contract.build_package(
+        brief, kind=kind, cost_bound=cost_bound,
+        cap_key=cap_key if cost_bound or parent else None,
+        skills=_skills, tools=_tools, done_when=done_when, image=image,
+        paid_mode=PAID_MODE)
+    _pkg_errs = mission_contract.validate_package(_pkg)
+    if _pkg_errs:
+        raise ValueError("invalid mission package: " + "; ".join(_pkg_errs))
     MISSIONS[mid] = {"id": mid, "brief": brief, "status": "EN ROUTE",
                      "t_start": time.time(), "t_end": None,
                      "cost": None, "debrief": None, "events": [], "last_event": None,
                      "agent": agent or _next_agent(), "kind": kind, "parent": parent,
                      "cap_key": cap_key if cost_bound or parent else None,
                      "skills": _skills,
+                     "package": _pkg,
+                     "done_when": _pkg["done_when"],
                      "screenshot": shot}
+    _mission_state_receipt(MISSIONS[mid], None, "EN ROUTE")
     persist_missions()
     hue.event("deploy")
     threading.Thread(target=run_mission, args=(mid,), daemon=True).start()
@@ -1724,6 +1751,7 @@ def run_internal_mission(m):
             # same terminal state + persistence as the post-call path
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            _mission_state_receipt(m, "EN ROUTE", "ABORTED")
             if m.get("cap_key") and m.get("cap_key") == mid:
                 _cap_release(mid)            # solo cap only; squad caps belong to the parent
             persist_missions()
@@ -1737,6 +1765,7 @@ def run_internal_mission(m):
         if m.get("_abort"):
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            _mission_state_receipt(m, "EN ROUTE", "ABORTED")
             if m.get("cap_key") and m.get("cap_key") == mid:
                 _cap_release(mid)            # solo cap only; squad caps belong to the parent
             persist_missions()
@@ -1809,10 +1838,12 @@ def run_internal_mission(m):
             except Exception:
                 pass
         m.update(status="COMPLETE", t_end=time.time(), cost=None, debrief=debrief)
+        _mission_state_receipt(m, "EN ROUTE", "COMPLETE")
         hue.event("complete")
     except Exception as e:
         m.update(status="FAILED", t_end=time.time(),
                  debrief=f"Job failed: {str(e)[:200]}")
+        _mission_state_receipt(m, "EN ROUTE", "FAILED")
         hue.event("fail")
     if m.get("cap_key") and m.get("cap_key") == mid:
         _cap_release(mid)                        # stale aggregate caps never linger
@@ -2005,6 +2036,7 @@ def run_mission(mid):
         if m.get("_abort") or m["status"] in ("ABORTING", "ABORTED"):
             m.update(status="ABORTED", t_end=time.time(),
                      debrief="Job aborted on your order.")
+            _mission_state_receipt(m, "EN ROUTE", "ABORTED")
             _release_mission_lock(mid)
             persist_missions(); return
         if timed_out:
@@ -2796,6 +2828,11 @@ class Handler(BaseHTTPRequestHandler):
             img = data.get("image") or None    # screen frame riding along, if shared
             if not brief:
                 self._json({"error": "empty brief"}, 400); return
+            _dw = data.get("done_when")
+            if _dw is not None and not str(_dw).strip():
+                self._json({"error": "done_when must be non-empty when provided"}, 400)
+                return
+            _dw = str(_dw).strip()[:500] if _dw is not None else None
             sq0 = re.match(r"^\s*squad[:,\s]+(.*)$", brief, re.I | re.S)
             if data.get("plan") and not (sq0 or data.get("squad")):
                 self._json({"error": "plan dry-run is only meaningful for squad briefs; "
@@ -2838,7 +2875,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 nm = re.search(r"\b(CASE|KIPP|PLEX|N1X)\b", brief[:40])
                 mid = start_mission(brief, image=img, agent=nm.group(1) if nm else None,
-                                    cost_bound=_approved_bound)
+                                    cost_bound=_approved_bound, done_when=_dw)
                 self._json({"id": mid, "status": "EN ROUTE",
                             "agent": MISSIONS[mid]["agent"]})
 
