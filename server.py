@@ -73,6 +73,7 @@ for _primary, _legacy in ((STATE_PATH, LEGACY_STATE_PATH),
 
 # ------------------------------------------------- structured memory v2
 import memory_store as memv2
+import skills_select
 import tool_contracts
 import verify
 memv2.init(DATA)
@@ -1225,11 +1226,16 @@ def start_mission(brief, agent=None, kind="OPS", parent=None, image=None, cost_b
     cap_key = parent or mid
     if parent is None and cost_bound:
         _cap_register(cap_key, cost_bound)
+    try:
+        _skills = skills_select.mission_skills(brief)
+    except Exception:
+        _skills = []
     MISSIONS[mid] = {"id": mid, "brief": brief, "status": "EN ROUTE",
                      "t_start": time.time(), "t_end": None,
                      "cost": None, "debrief": None, "events": [], "last_event": None,
                      "agent": agent or _next_agent(), "kind": kind, "parent": parent,
                      "cap_key": cap_key if cost_bound or parent else None,
+                     "skills": _skills,
                      "screenshot": shot}
     persist_missions()
     hue.event("deploy")
@@ -1702,8 +1708,12 @@ def run_internal_mission(m):
             scope += (" This was a BUILD brief: deliver the complete build spec/design "
                       "document instead, and state that file creation needs a host with "
                       "the coding CLI.")
+        try:
+            _skills_txt = skills_select.skills_block(m["brief"])
+        except Exception:
+            _skills_txt = ""
         worker_prompt = (
-            f"MISSION BRIEF: {m['brief']}\n\n"
+            f"MISSION BRIEF: {m['brief']}\n\n" + _skills_txt +
             "Execute this mission as a bounded research/synthesis report. " + scope +
             " Your FINAL message must be the complete mission report in markdown: "
             "start with '# MISSION REPORT', then '## Findings' (specific, honest about "
