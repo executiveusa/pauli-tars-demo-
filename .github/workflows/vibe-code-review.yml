@@ -20,15 +20,15 @@ jobs:
     with:
       ocr_version: "1.11.8"   # exact integrity-locked package version
       llm_url: https://openrouter.ai/api/v1/chat/completions
-      model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free   # FALLBACK 1: live $0 OCR pass 2026-09-11;
-                                # account on top free tier (1000 req/day, 20 req/min; paid 402s only).
+      model: google/gemma-4-31b-it:free   # FALLBACK 2: non-reasoning, fast; 503s under load (retry on cadence).
                                 # Chain (hard stop at each lane's daily cap, never burn a capped lane, no paid):
-                                #   2. google/gemma-4-31b-it:free (503s under load - retry window dependent)
                                 #   3. nex-n2.5-pro:free (or openrouter/free auto-router)
                                 # Lanes ruled out on this repo:
-                                #   - Groq qwen/qwen3.6-27b (attempt 2026-09-12 05:36Z): structural - free
-                                #     on_demand OTPM 1000 < tool's per-request output budget (1032-3644),
-                                #     TPM 8000 < 11040 on largest file; 8/9 failed, not retryable.
+                                #   - OpenRouter nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free:
+                                #     reasoning model too slow - 2 attempts both cancelled at the 30-min
+                                #     job timeout (2026-09-12 06:12Z / 06:45Z), output buffered, no resume.
+                                #   - Groq qwen/qwen3.6-27b: structural - free on_demand OTPM 1000 <
+                                #     tool per-request output budget (1032-3644); TPM 8000 < 11040.
                                 #   - google/gemma-4-26b-a4b-it:free: upstream Google AI Studio BYOK
                                 #     16K input-TPM free cap bursts 429.
                                 #   - Groq gpt-oss-120b org-shared TPD exhausted; gpt-oss-20b hidden
