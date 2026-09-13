@@ -93,6 +93,15 @@ try:
         os.environ.get("BARS_ALLOWED_ORIGINS", ""), ALLOW_LOCAL_DEV)
 except sec.SecurityConfigError as e:
     raise SystemExit(f"[bars] FATAL security config: {e}")
+
+# Canonical fleet/city state (Pauli's Place). Read-only, server-side only:
+# the token never reaches the browser. Fail-closed - when unconfigured or
+# unreachable the fleet surfaces say so instead of inventing state.
+FLEET_API_URL = os.environ.get(
+    "BARS_FLEET_API_URL",
+    "https://api.thepaulieffect.com/mission-control/api/canonical",
+)
+FLEET_API_TOKEN = os.environ.get("BARS_FLEET_API_TOKEN", "")
 def _read_sha():
     # image-baked provenance wins: /health must report the SHA the code was
     # built from, not a circular runtime env echo
@@ -405,6 +414,87 @@ CONSTITUTION_PROMPT = _read_prompt(CONSTITUTION_PATH)
 BARS_OVERLAY_PROMPT = _read_prompt(BARS_OVERLAY_PATH)
 
 
+_FLEET_CACHE = {"ts": 0.0, "data": None}
+_FLEET_CACHE_TTL = 5.0
+
+
+def _fleet_fetch(force=False):
+    """Read the canonical city-state API server-side.
+
+    Fail-closed: returns (None, reason) on any problem and callers surface
+    the reason - nothing about the fleet is ever invented.
+    """
+    if not FLEET_API_TOKEN:
+        return None, "fleet token not configured"
+    now = time.time()
+    if not force and now - _FLEET_CACHE["ts"] < _FLEET_CACHE_TTL:
+        if _FLEET_CACHE["data"] is not None:
+            return _FLEET_CACHE["data"], None
+        return None, "fleet state unreachable (cached)"
+    req = urllib.request.Request(
+        FLEET_API_URL,
+        headers={"Authorization": "Bearer " + FLEET_API_TOKEN,
+                 "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+    except Exception as exc:
+        _FLEET_CACHE["ts"] = now
+        return None, "fleet state unreachable (%s)" % type(exc).__name__
+    if not isinstance(data, dict):
+        _FLEET_CACHE["ts"] = now
+        return None, "fleet state malformed"
+    _FLEET_CACHE["ts"] = now
+    _FLEET_CACHE["data"] = data
+    return data, None
+
+
+def _fleet_public(data):
+    """Map the canonical payload onto the small shape the console renders.
+    Every field comes from the payload; missing stays missing."""
+    agents = []
+    for a in (data.get("agents") or []):
+        if not isinstance(a, dict):
+            continue
+        agents.append({
+            "id": a.get("id") or "",
+            "name": a.get("name") or a.get("id") or "?",
+            "role": a.get("role") or "agent",
+            "status": "online" if a.get("online") else "offline",
+            "task": a.get("status") or None,
+        })
+    agents = agents[:24]
+    missions = data.get("missions") if isinstance(data.get("missions"), dict) else {}
+    recent = missions.get("recent")
+    return {
+        "agents": agents,
+        "agents_online": sum(1 for a in agents if a["status"] == "online"),
+        "missions_recent": len(recent) if isinstance(recent, list) else None,
+        "canary_ok": missions.get("canary_ok"),
+        "generated_at": data.get("timestamp") or None,
+    }
+
+
+def _fleet_persona_block():
+    """Live-fleet block for the persona. Empty string when the city link is
+    down - BARS then says he cannot see the fleet instead of guessing."""
+    data, _err = _fleet_fetch()
+    if not data:
+        return ""
+    pub = _fleet_public(data)
+    if not pub["agents"]:
+        return ""
+    lines = ["## Live fleet (from the canonical city state, refreshed "
+             "server-side; never claim fleet facts beyond this list):"]
+    for a in pub["agents"][:12]:
+        line = "- {} ({}): {}".format(a["name"], a["role"], a["status"])
+        if a.get("task"):
+            line += " - " + str(a["task"])
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def persona(state, spoken=False):
     """Assemble BARS' fleet constitution, overlay, and live personality dials."""
     h, o = state["humor"], state["honesty"]
@@ -439,6 +529,10 @@ def persona(state, spoken=False):
         "If the Commander merely offers to lower FLAVOR or AUTHENTICITY, decline briefly. "
         "A direct slider change still takes effect. Reply in the language the Commander last used."
     )
+    fleet_block = _fleet_persona_block()
+    if fleet_block:
+        dials.append(fleet_block)
+
     if spoken:
         dials.append(
             "This reply will be spoken aloud. Use no markdown, bullets, headers, emoji, URLs, "
@@ -562,7 +656,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var c=el('div',null,'background:#111;color:#eee;border:1px solid #f59e0b;padding:22px;max-width:520px;border-radius:8px;max-height:80vh;overflow:auto');"
     b"c.appendChild(el('b','BARS - HUMAN APPROVAL REQUIRED','color:#f59e0b'));"
     b"var tb=el('table',null,'font-size:12px;line-height:1.6;margin-top:12px');"
-    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Worst-case cost (estimate, enforced cap)','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']."
+    b"[['Action',need.action],['Policy',need.policy],['Target',need.recipient],['Worst-case cost (estimate, enforced cap)','<= '+(need.cost_bound||0)+' tokens'],['Expires',(need.ttl_seconds||0)+'s after approval']]."
     b"forEach(function(r){var tr=el('tr');var k=el('td',r[0],null);k.style.fontWeight='bold';k.style.textAlign='right';k.style.paddingRight='8px';"
     b"tr.appendChild(k);tr.appendChild(el('td',r[1]||''));tb.appendChild(tr)});c.appendChild(tb);"
     b"c.appendChild(el('div','Exact payload:','font-weight:bold;margin-top:10px'));"
@@ -590,10 +684,28 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var exec=function(){return of(u,o)};"
     b"return exec().then(function(r){"
     b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'){"
-    b"var v=window.prompt('BARS operator token');"
-    b"if(v){return of('/api/session',{method:'POST',headers:{'content-type':'application/json'},"
-    b"body:JSON.stringify({token:v})}).then(function(l){if(l.ok){return window.fetch(u,o)}return r})}"
-    b"return r}"
+    b"return new Promise(function(resolve){"
+    b"if(document.getElementById('barsLoginModal')){resolve(r);return}"
+    b"var d=el('div',null,'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:99998;display:flex;align-items:center;justify-content:center;font-family:monospace;padding:16px');"
+    b"d.id='barsLoginModal';"
+    b"var c=el('div',null,'background:#15171d;color:#efece6;border:1px solid #f59e0b;padding:22px;width:100%;max-width:420px;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.6)');"
+    b"c.appendChild(el('b','BARS - OPERATOR LOGIN','color:#f59e0b'));"
+    b"c.appendChild(el('div','Paste the operator token to open the console.','font-size:12px;margin-top:8px;color:#c4c1b9'));"
+    b"var inp=el('input',null,'width:100%;box-sizing:border-box;margin-top:12px;padding:12px;font-size:16px;background:#0c0d11;color:#efece6;border:1px solid #444;border-radius:6px');"
+    b"inp.type='password';inp.placeholder='operator token';inp.setAttribute('autocomplete','off');"
+    b"var err=el('div','','color:#ff5a48;font-size:12px;margin-top:8px;min-height:14px');"
+    b"var okb=el('button','CONNECT','background:#f59e0b;color:#1a1205;padding:12px 18px;margin:14px 8px 0 0;cursor:pointer;border:0;border-radius:6px;font-weight:bold;font-size:14px');"
+    b"var nob=el('button','NOT NOW','background:#232730;color:#efece6;padding:12px 18px;margin-top:14px;cursor:pointer;border:1px solid #555;border-radius:6px;font-size:14px');"
+    b"function done(v){d.remove();resolve(v)}"
+    b"nob.onclick=function(){done(r)};"
+    b"function go(){var v=inp.value.trim();if(!v)return;okb.disabled=true;err.textContent='';"
+    b"of('/api/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:v})})"
+    b".then(function(l){if(l.ok){done(window.fetch(u,o))}else{okb.disabled=false;err.textContent='Token rejected - check it and try again.'}})"
+    b".catch(function(){okb.disabled=false;err.textContent='Network error - try again.'})}"
+    b"okb.onclick=go;inp.onkeydown=function(e){if(e.key==='Enter')go()};"
+    b"c.appendChild(inp);c.appendChild(err);c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d);"
+    b"setTimeout(function(){try{inp.focus()}catch(e){}},50);"
+    b"})}"
     b"if(r.status===409&&same){return r.clone().json().then(function(j){"
     b"if(j&&j.need_confirmation){return new Promise(function(resolve){"
     b"var bind=j.need_confirmation.bind_payload||payloadObj;"
@@ -2252,6 +2364,15 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(min(0.5 * (2 ** min(n - 3, 4)), 8))
         return False
 
+    def _presented_credential(self):
+        """True when the request carries any credential (bearer, X-BARS-Token,
+        or session cookie). Only credential-bearing failures feed the
+        brute-force throttle - bare probes from the logged-out public page
+        must not lock the owner out of the login prompt."""
+        return bool(self.headers.get("Authorization") or
+                    self.headers.get("X-BARS-Token") or
+                    _cookie(self.headers, "bars_session"))
+
     TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
 
     def _client_ip(self):
@@ -2387,7 +2508,7 @@ class Handler(BaseHTTPRequestHandler):
         if not public and not _token_ok(self.headers):
             if path == "/api/status":
                 self._json(_public_status()); return   # sanitized anonymous status
-            if self._throttle_auth_fail():
+            if self._presented_credential() and self._throttle_auth_fail():
                 self._json({"error": "rate limited", "retry_after": 60}, 429)
             else:
                 self._need_auth()
@@ -2570,6 +2691,14 @@ class Handler(BaseHTTPRequestHandler):
                         "pending": bool(ACTIONS),
                         "usage": dict(LAST_USAGE),
                         "spend": spend})
+        elif path == "/api/fleet":
+            data, err = _fleet_fetch()
+            if err:
+                self._json({"ok": False, "error": err, "agents": []})
+                return
+            payload = {"ok": True}
+            payload.update(_fleet_public(data))
+            self._json(payload)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -2583,7 +2712,7 @@ class Handler(BaseHTTPRequestHandler):
             SESSIONS.destroy(_cookie(self.headers, "bars_session"))
             self._json({"ok": True}); return
         if not _token_ok(self.headers, mutate=True):
-            if self._throttle_auth_fail():
+            if self._presented_credential() and self._throttle_auth_fail():
                 self._json({"error": "rate limited", "retry_after": 60}, 429)
             else:
                 self._need_auth()

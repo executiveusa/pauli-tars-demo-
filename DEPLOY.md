@@ -23,6 +23,7 @@ static visual reference/fallback only — it is not a backend.
    - `BARS_OPERATOR_TOKEN` = `openssl rand -hex 32` (store in Infisical as
      `BARS_OPERATOR_TOKEN`)
    - `BARS_ALLOWED_ORIGINS=https://barsdemo.netlify.app` (the cockpit itself is served same-origin via Caddy at https://bars.thepaulieffect.com, which needs no allowlist entry; only cross-origin callers are listed)
+   - `BARS_FLEET_API_TOKEN` = the canonical read-only city-state token (Infisical: `CANONICAL_API_TOKEN`) - powers `/api/fleet` + the console FLEET panel. Optional: without it the panel reports "fleet token not configured" and chat loses fleet awareness; nothing breaks.
 4. DNS: `bars.thepaulieffect.com` A record → `31.220.58.212`, DNS-only
    (grey cloud) in the Cloudflare zone `96712684919a639674c22fee58732ed9`.
 
