@@ -2489,6 +2489,51 @@ class Handler(BaseHTTPRequestHandler):
                                               "bind_payload": data}}, 409)
             return False
 
+    def _voice_gate(self, action, data, recipient, est_tokens):
+        """Voice lanes (/stt, /tts). Owner-approved policy change (2026-09-13,
+        Bambú verbatim: "approve voice once per session so we don't have to keep
+        tapping it"): one owner approval per browser session covers voice in both
+        directions; bearer/CLI callers keep the exact per-call confirmation.
+        Per-call budget reservation, settlement and receipts are unchanged."""
+        sid = _cookie(self.headers, "bars_session")
+        if SESSIONS.valid(sid):
+            if not SESSIONS.has(sid, "voice"):
+                cid = self.headers.get("X-BARS-Confirmation", "")
+                granted = False
+                if cid:
+                    try:
+                        CONFIRMATIONS.consume(cid, "tts.session",
+                                              {"scope": "session"},
+                                              recipient=recipient,
+                                              principal=self._principal())
+                        SESSIONS.grant(sid, "voice")
+                        granted = True
+                        _receipt({"kind": "media_attempt", "lane": "tts.session",
+                                  "paid": True, "ok": True,
+                                  "note": "voice approved for session"})
+                    except Exception:
+                        granted = False
+                if not granted:
+                    ttl, policy, cost = sec.ConfirmationStore.POLICIES["tts.session"]
+                    self._json({"error": "confirmation required: voice not approved for this session",
+                                "need_confirmation": {"action": "tts.session",
+                                                      "policy": policy,
+                                                      "recipient": recipient,
+                                                      "cost_bound": cost,
+                                                      "ttl_seconds": ttl,
+                                                      "bind_payload": {"scope": "session"}}}, 409)
+                    return "gated"
+            hold = f"{action}:{recipient}:{os.urandom(4).hex()}"
+            try:
+                BUDGET.reserve(int(est_tokens), hold)
+            except RuntimeError as e:
+                self._json({"error": str(e)[:200]}, 402)
+                return "gated"
+            _receipt({"kind": "media_attempt", "lane": action, "paid": True,
+                      "est": int(est_tokens), "ms": 0})
+            return hold
+        return self._paid_media_gate(action, data, recipient, est_tokens)
+
     def _paid_media_gate(self, action, data, recipient, est_tokens):
         """Paid media calls (voice/realtime): exact confirmation, atomic budget
         reservation, input/duration caps enforced by caller, attempt receipts,
@@ -2763,7 +2808,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(n) if 0 < n <= 12_000_000 else b""   # 12MB duration cap
             if not raw:
                 self._json({"error": "no audio"}, 400); return
-            hold = self._paid_media_gate(
+            hold = self._voice_gate(
                 "stt.exec",
                 {"audio_bytes": n,
                  "audio_sha256": hashlib.sha256(raw).hexdigest(),
@@ -3378,8 +3423,8 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()[:4000]     # input cap
             if not text:
                 self._json({"error": "empty"}, 400); return
-            hold = self._paid_media_gate("tts.exec", {"text": text}, "/tts",
-                                         len(text) // 4 + 500)
+            hold = self._voice_gate("tts.exec", {"text": text}, "/tts",
+                                    len(text) // 4 + 500)
             if hold == "gated":
                 return
             try:

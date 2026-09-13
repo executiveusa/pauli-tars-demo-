@@ -113,6 +113,17 @@ class SessionStore:
         with self._lock:
             self._sessions.pop(sid, None)
 
+    def grant(self, sid, flag):
+        """Scope a standing approval (e.g. session voice) to one session."""
+        with self._lock:
+            s = self._sessions.get(sid)
+            if s:
+                s.setdefault("flags", set()).add(flag)
+
+    def has(self, sid, flag):
+        s = self._get(sid)
+        return bool(s and flag in s.get("flags", ()))
+
 # ------------------------------------------------------------ budget ledger
 
 class BudgetLedger:
@@ -486,6 +497,7 @@ class ConfirmationStore:
         "build.exec": (120, "execute a generated build artifact", 8192),
         "hands.exec": (120, "run a machine-control task on this host", 4096),
         "tts.exec": (120, "synthesize speech (paid voice call)", 2000),
+        "tts.session": (300, "approve voice for this session (listen + talk until logout)", 0),
         "stt.exec": (120, "transcribe audio (paid speech call)", 3000),
         "realtime.exec": (120, "open a realtime voice session (paid)", 8000),
         "model.switch": (120, "switch the active model (changes spend profile)", 0),

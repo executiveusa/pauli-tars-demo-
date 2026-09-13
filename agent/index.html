@@ -377,6 +377,13 @@
   #ptt:active{background:var(--amber-soft)}
   #ptt.live{color:var(--bad);border-color:var(--bad);background:rgba(255,90,72,.16);animation:blink .9s infinite}
   #ptt .ptt-dot{font-size:18px}
+  #talkBtn{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:4000;display:none;
+    align-items:center;gap:8px;padding:18px 20px;border-radius:999px;
+    border:2px solid var(--ok);background:var(--card);color:var(--ok);
+    font:700 13px/1 inherit;letter-spacing:.1em;cursor:pointer;
+    box-shadow:0 8px 28px rgba(0,0,0,.55);touch-action:manipulation;
+    user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
+  #talkBtn.live{color:var(--bad);border-color:var(--bad);background:rgba(255,90,72,.16);animation:blink .9s infinite}
   /* fleet panel rows */
   .fleetRow{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid var(--faint);font-size:12px}
   .fleetRow:last-child{border-bottom:none}
@@ -386,7 +393,8 @@
   .fleetRow i.fdot.on{background:var(--ok);box-shadow:0 0 6px rgba(127,211,154,.6)}
   .fleetEmpty{color:var(--mut);font-size:12px;padding:6px 2px}
   @media (max-width:960px){
-    #ptt{display:flex}
+    #ptt{display:flex;left:14px;transform:none}
+    #talkBtn{display:inline-flex}
     body{padding-bottom:96px}
     #main{flex-direction:column}
     #stage{flex:none;padding:12px 0}
@@ -466,6 +474,7 @@
 </div>
 
 <button id="ptt" aria-label="Hold to talk to BARS"><span class="ptt-dot">◉</span>HOLD TO TALK</button>
+  <button id="talkBtn" aria-label="Hands-free conversation with BARS">TALK</button>
 
 <footer id="hint">
   <span><span class="k">ENTER</span>&nbsp;ASK</span>
@@ -1026,6 +1035,7 @@ async function _say(text){
     }else if(!(r.ok&&ct.includes("audio"))){if(gen===speechGen)await sayBrowser(text);}
   }catch(e){if(gen===speechGen)await sayBrowser(text);}
   speakingN=Math.max(0,speakingN-1);setBody();
+  if(handsFree&&speakingN===0)openChannel();   // talk mode: keep the floor open for his reply
   fetch("/hue",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({event:"speak_end"})}).catch(()=>{});
 }
@@ -1870,6 +1880,18 @@ function pttStop(cancel){
   pb.addEventListener("pointercancel",()=>pttStop(true));
   pb.addEventListener("pointerleave",()=>{if(pttHeld)pttStop(false);});
   pb.addEventListener("contextmenu",e=>e.preventDefault());
+}
+
+/* ---------------- talk mode: GPT-voice-style continuous conversation -------
+   One tap starts the hands-free loop (server /stt + VAD + barge-in already
+   built for desktop); the mobile pill just surfaces it. While the mode is on,
+   the channel re-opens after every reply so the back-and-forth never needs a
+   wake word again until STAND DOWN or tapping END TALK. */
+{
+  const tb=$("#talkBtn");
+  tb.addEventListener("click",()=>{$("#hfBtn").click();});
+  setInterval(()=>{tb.classList.toggle("live",handsFree);
+    tb.textContent=handsFree?"◉ END TALK":"TALK";},500);
 }
 
 /* ---------------- fleet panel: live city state, fail-closed ---------------- */
