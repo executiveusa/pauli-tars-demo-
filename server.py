@@ -2247,12 +2247,42 @@ def _groq_tts(text):
         return r.read()
 
 
+
+def _rime_tts(text):
+    """Rime lane: the decided BARS voice (speaker "bond"). Returns mp3 bytes or
+    None. Environment-gated (RIME_API_KEY / RIME_VOICE / RIME_MODEL), reversible;
+    sits inside the existing /tts confirmation + budget controls."""
+    key = os.environ.get("RIME_API_KEY") or os.environ.get("RIME_API_TOKEN")
+    if not key:
+        return None
+    body = json.dumps({"text": speakable(text)[:900],
+                       "modelId": os.environ.get("RIME_MODEL", "arcana"),
+                       "speaker": (os.environ.get("RIME_VOICE")
+                                   or os.environ.get("RIME_SPEAKER") or "bond"),
+                       "lang": "en"}).encode()
+    req = urllib.request.Request(
+        os.environ.get("RIME_TTS_URL", "https://users.rime.ai/v1/rime-tts"),
+        data=body,
+        headers={"Authorization": "Bearer " + key,
+                 "content-type": "application/json",
+                 "Accept": "audio/mpeg"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read()
+
+
 def tts_bytes(text):
-    """-> (audio_bytes, content_type) or (None, None): ElevenLabs first, then the
-    free Groq speech lane. (None, None) tells the caller to use browser speech."""
+    """-> (audio_bytes, content_type) or (None, None): Rime (the decided BARS
+    voice) first, then ElevenLabs, then the free Groq speech lane.
+    (None, None) tells the caller to use browser speech."""
     if CONFIG["el_key"] and not CONFIG.get("el_voice"):
         CONFIG["el_voice"] = "CwhRBWXzGAHq8TQ4Fs17"
     t = speakable(text)
+    try:
+        audio = _rime_tts(t)
+        if audio:
+            return audio, "audio/mpeg"
+    except Exception:
+        pass
     if CONFIG["el_key"] and CONFIG["el_voice"]:
         # [sighs]-style tags → try the expressive v3 model; fall back to turbo w/o tags
         if AUDIO_TAG.search(t):
