@@ -674,6 +674,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var h2=new Headers(exec.h||{});h2.set('X-BARS-Confirmation',cj.id);"
     b"return of(exec.u,{method:exec.m,headers:h2,body:exec.b})})}"
     b"var of=window.fetch.bind(window);"
+    b"var ownerEntry=location.pathname.replace(/\/+$/,'')==='/ops';if(ownerEntry)window.__barsOwnerEntry=true;"
     b"window.fetch=function(u,o){o=o||{};var url=(typeof u==='string')?u:(u&&u.url)||'';"
     b"var same=sameOrigin(url);"
     b"var p=new URL(url,location.href).pathname;"
@@ -684,9 +685,8 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var exec=function(){return of(u,o)};"
     b"return exec().then(function(r){"
     b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'&&!window.__barsDemoMode){"
-    b"return of('/api/status').then(function(sr){return sr.json()}).catch(function(){return{}}).then(function(st){"
-    b"if(st&&st.mode==='public'&&st.demo!==false){window.__barsDemoMode=true;return r;}"
-    b"return new Promise(function(resolve){"
+    b"try{['bars_token','tars_token','barsToken','bars_operator_token','operator_token'].forEach(function(k){localStorage.removeItem(k)})}catch(e){}"
+    b"var showLogin=function(){return new Promise(function(resolve){"
     b"if(document.getElementById('barsLoginModal')){resolve(r);return}"
     b"var d=el('div',null,'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:99998;display:flex;align-items:center;justify-content:center;font-family:monospace;padding:16px');"
     b"d.id='barsLoginModal';"
@@ -707,7 +707,12 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"okb.onclick=go;inp.onkeydown=function(e){if(e.key==='Enter')go()};"
     b"c.appendChild(inp);c.appendChild(err);c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d);"
     b"setTimeout(function(){try{inp.focus()}catch(e){}},50);"
-    b"})})}"
+    b"})};"
+    b"if(window.__barsOwnerEntry){return showLogin();}"
+    b"return of('/api/status').then(function(sr){return sr.json()}).catch(function(){return{}}).then(function(st){"
+    b"if(st&&st.mode==='public'&&st.demo!==false){window.__barsDemoMode=true;return r;}"
+    b"return showLogin();"
+    b"})}"
     b"if(r.status===409&&same){return r.clone().json().then(function(j){"
     b"if(j&&j.need_confirmation){return new Promise(function(resolve){"
     b"var bind=j.need_confirmation.bind_payload||payloadObj;"
@@ -731,9 +736,12 @@ def _inject_auth_shim(body):
         return AUTH_SHIM + body
     return body[:idx] + AUTH_SHIM + body[idx:]
 
-def _public_status():
-    """Anonymous /api/status: enough for the public front door, nothing sensitive."""
+def _public_status(client_ip=None):
+    """Anonymous /api/status: enough for the public front door, nothing sensitive.
+    client_ip echoes the requester's OWN attributed IP so proxy/XFF attribution
+    can be verified live from any device."""
     return {"ok": True, "service": "bars", "mode": "public",
+            "client_ip": client_ip,
             "demo": DEMO_ENABLED,
             "brain": bool(CONFIG["anthropic_key"]),
             "voice": bool((CONFIG["el_key"] and CONFIG["el_voice"])
@@ -2432,6 +2440,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("WWW-Authenticate", 'Bearer realm="bars"')
+        if _cookie(self.headers, "bars_session"):
+            # the session the client presented is dead - expire it in the
+            # browser jar so polls stop carrying a credential that can never
+            # authenticate again
+            tls = self.headers.get("X-Forwarded-Proto", "") == "https"
+            self.send_header("Set-Cookie",
+                             "bars_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" +
+                             ("; Secure" if tls else ""))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -2457,24 +2473,28 @@ class Handler(BaseHTTPRequestHandler):
             for k in [k for k, r in self.LOGIN_FAILS.items() if now - r["t"] > 900]:
                 self.LOGIN_FAILS.pop(k, None)
 
-    def _throttle_auth_fail(self):
-        """Bearer/session failures: per-IP backoff, hard lockout past 8. Returns
-        True when the request must be answered 429."""
+    AUTH_FAILS = {}
+    AUTH_LOCK = threading.Lock()
+
+    def _soft_auth_fail(self):
+        """Credential failures OUTSIDE /api/session (expired session cookies or
+        stale bearer tokens on polls): per-IP progressive backoff ONLY - never
+        a hard lockout and never 429, so one stuck client can never block
+        re-login for itself or anyone else. The brute-force lockout lives
+        exclusively in _login, counting only /api/session failures."""
         ip = self._client_ip()
         now = time.time()
-        with self.LOGIN_LOCK:
-            self._prune_throttle(now)
-            rec = self.LOGIN_FAILS.setdefault(ip, {"n": 0, "t": 0.0})
+        with self.AUTH_LOCK:
+            if len(self.AUTH_FAILS) > 64:
+                for k in [k for k, r in self.AUTH_FAILS.items() if now - r["t"] > 900]:
+                    self.AUTH_FAILS.pop(k, None)
+            rec = self.AUTH_FAILS.setdefault(ip, {"n": 0, "t": 0.0})
             if now - rec["t"] > 900:
                 rec["n"] = 0
             rec["n"] += 1
             rec["t"] = now
             n = rec["n"]
-        if n > 8:
-            return True
-        if n > 3:
-            time.sleep(min(0.5 * (2 ** min(n - 3, 4)), 8))
-        return False
+        time.sleep(min(0.25 * (2 ** min(n, 4)), 4))
 
     def _presented_credential(self):
         """True when the request carries any credential (bearer, X-BARS-Token,
@@ -2485,7 +2505,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.headers.get("X-BARS-Token") or
                     _cookie(self.headers, "bars_session"))
 
-    TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1"})
+    # Caddy's egress peer must be trusted before XFF is consulted at all.
+    # When the proxy does not reach BARS over loopback (e.g. a docker bridge
+    # IP), set BARS_TRUSTED_PROXIES to that peer IP or every client collapses
+    # into one shared identity - shared rate limits, shared lockouts.
+    TRUSTED_PROXIES = frozenset(
+        {"127.0.0.1", "::1"} |
+        {h.strip()[:64] for h in os.environ.get("BARS_TRUSTED_PROXIES", "").split(",")
+         if h.strip()})
 
     def _client_ip(self):
         """Caddy appends the real client to XFF; inbound XFF from the client is
@@ -2722,18 +2749,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             self._json({"ok": True, "service": "bars", "sha": GIT_SHA or None}); return
         public = path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/",
-                          "/agent", "/agent/", "/index.html") or path.startswith("/static/")
+                          "/agent", "/agent/", "/index.html",
+                          "/ops") or path.startswith("/static/")
         if HANDS and path == "/api/hands":
             if not _token_ok(self.headers):
                 self._need_auth(); return
             HANDS.handle(self, "GET", self.path, None); return
         if not public and not _token_ok(self.headers):
             if path == "/api/status":
-                self._json(_public_status()); return   # sanitized anonymous status
-            if self._presented_credential() and self._throttle_auth_fail():
-                self._json({"error": "rate limited", "retry_after": 60}, 429)
-            else:
-                self._need_auth()
+                self._json(_public_status(self._client_ip())); return   # sanitized anonymous status
+            if self._presented_credential():
+                self._soft_auth_fail()
+            self._need_auth()
             return
         if path == "/api/memory/recall":
             from urllib.parse import urlparse, parse_qs
@@ -2756,9 +2783,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"session": sess, "turns": memv2.transcript(sess, limit),
                         "sessions": memv2.sessions()})
             return
-        if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html"):
+        if path in ("/", "/frontdoor", "/frontdoor.html", "/frontdoor/", "/agent", "/agent/", "/index.html", "/ops"):
             # the visual BARS cockpit is the primary interface at / and /agent/;
             # the newer front-door experience stays available at /frontdoor/.
+            # /ops is the unadvertised owner entry: same console, but the auth
+            # shim treats it as operator intent (demo mode off, login allowed).
             page = "frontdoor.html" if path in ("/frontdoor", "/frontdoor.html", "/frontdoor/") else "index.html"
             try:
                 with open(os.path.join(STATIC, page), "rb") as f:
@@ -2940,10 +2969,9 @@ class Handler(BaseHTTPRequestHandler):
             self._demo_tts()
             return
         if not _token_ok(self.headers, mutate=True):
-            if self._presented_credential() and self._throttle_auth_fail():
-                self._json({"error": "rate limited", "retry_after": 60}, 429)
-            else:
-                self._need_auth()
+            if self._presented_credential():
+                self._soft_auth_fail()
+            self._need_auth()
             return
         if path == "/api/confirmations":
             data = self._body()

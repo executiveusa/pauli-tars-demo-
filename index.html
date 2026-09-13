@@ -2515,7 +2515,7 @@ function stopRealtime(){
     if(s.voice_name)curVoice=s.voice_name;
     if(s.trust)trust=s.trust;
     if(s.takeover_speed)takeoverSpeed=s.takeover_speed;
-    demoMode=(s.mode==="public"&&s.demo!==false);
+    demoMode=(s.mode==="public"&&s.demo!==false)&&!window.__barsOwnerEntry;
     if(demoMode)document.body.classList.add("demo");
     window.__barsDemoMode=demoMode;
     if(s.pending)showPending("(queued before reload — open the transcript for details)");
