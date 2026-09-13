@@ -377,6 +377,10 @@
   #ptt:active{background:var(--amber-soft)}
   #ptt.live{color:var(--bad);border-color:var(--bad);background:rgba(255,90,72,.16);animation:blink .9s infinite}
   #ptt .ptt-dot{font-size:18px}
+  #demoTag{display:none;font:700 10px var(--sans);letter-spacing:.18em;color:var(--amber);
+    border:1px solid var(--amber-line);border-radius:999px;padding:3px 10px}
+  body.demo #demoTag{display:inline-block}
+  body.demo #deployBtn,body.demo #modeHelp,body.demo #talkBtn,body.demo #hfBtn,body.demo .ownerOnly{display:none!important}
   #talkBtn{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:4000;display:none;
     align-items:center;gap:8px;padding:18px 20px;border-radius:999px;
     border:2px solid var(--ok);background:var(--card);color:var(--ok);
@@ -417,6 +421,7 @@
     <span class="hudlabel"><i class="dot" id="dotHue"></i>HUE</span>
   </div>
   <span id="stateTag">IDLE</span>
+  <span id="demoTag">DEMO</span>
   <div id="clock">T+ 00:00</div>
   <div class="dial"><div class="row"><span class="hudlabel">FLAVOR</span><span class="val" id="humorVal">75%</span></div>
     <input type="range" id="humor" min="0" max="100" value="75"></div>
@@ -478,7 +483,7 @@
 
 <footer id="hint">
   <span><span class="k">ENTER</span>&nbsp;ASK</span>
-  <span><span class="k">⇧ENTER</span>&nbsp;DEPLOY</span>
+  <span class="ownerOnly"><span class="k">⇧ENTER</span>&nbsp;DEPLOY</span>
   <span><span class="k">◉</span>&nbsp;TALK</span>
   <span><span class="k">🖥</span>&nbsp;SCREEN</span>
   <span><span class="k">"SQUAD:"</span>&nbsp;SPLIT ACROSS ROBOTS</span>
@@ -915,7 +920,7 @@ let speakingN=0, rtcLive=false;   // rtcLive = GPT Realtime call in progress
 function setBody(){
   const working=Object.values(MISSIONS).some(m=>m.status==="EN ROUTE");
   const st=rtcLive?"speaking":(speakingN>0?"speaking":(working?"working":"idle"));
-  document.body.className=st;
+  document.body.className=st+(demoMode?" demo":"");
   barsMode((rtcLive||speakingN>0)?"speak":"idle");   // main BARS talks; the FLEET works
   $("#stateTag").textContent=rtcLive?"◉ LIVE CALL":(speakingN>0?"SPEAKING":(working?"ON A JOB":"IDLE"));
   syncFleet();
@@ -1018,8 +1023,8 @@ async function _say(text){
   fetch("/hue",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({event:"speak_start"})}).catch(()=>{});
   try{
-    const r=await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text})});
+    const r=await fetch(demoMode?"/demo/tts":"/tts",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(demoMode?{text,session:demoSid}:{text})});
     const ct=r.headers.get("Content-Type")||"";
     if(r.ok&&ct.includes("audio")&&gen===speechGen){   // barged during fetch → drop clip
       const blob=await r.blob();
@@ -1411,7 +1416,40 @@ async function cancelIt(){
   const j=await r.json();hidePending();tx("BARS",j.reply);say(j.reply);
 }
 $("#pcDo").onclick=doIt;$("#pcCancel").onclick=cancelIt;
+/* ---------------- client demo lane (public, no login) ----------------
+   Server advertises it via /api/status {mode:"public", demo:true}. ASK-only:
+   deploy/mission powers stay behind the operator login. */
+let demoMode=false;
+const demoSid=(()=>{try{return localStorage.barsDemoSid||
+  (localStorage.barsDemoSid=Math.random().toString(36).slice(2)+Date.now().toString(36));}
+  catch(e){return "sess"+Math.random().toString(36).slice(2)}})();
+async function demoAsk(text){
+  const inp=$("#brief");inp.value="";tx("YOU",text);
+  $("#askBtn").disabled=true;speakingN++;setBody();
+  try{
+    const r=await fetch("/ask",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text,history})});
+    const j=await r.json();speakingN--;
+    if(j.reply!==undefined){
+      history.push({role:"user",content:text},{role:"assistant",content:j.reply||""});
+      if(history.length>12)history.splice(0,history.length-12);
+      if(j.reply){tx("BARS",j.reply);barsLine(j.reply,false);}
+      if(j.reply)await say(j.reply);
+    }else{
+      const msg=j.error||"Demo's busy right now - try again in a bit.";
+      tx("BARS",msg);barsLine(msg,true);
+    }
+  }catch(e){speakingN--;tx("BARS","Demo link hiccup - try again.");}
+  $("#askBtn").disabled=false;setBody();
+}
+
 async function ask(){
+  if(demoMode){
+    const inp=$("#brief");const text=inp.value.trim();
+    if(!text){emptyNudge();return;}
+    if(/^(tour|start (the )?tour|give me a tour|show me around|what can you do\??|what are you capable of( doing)?\??|what do you do\??|(show me your |what are your )?capabilities\??|how do i use (you|this)\??)$/i.test(text)){
+      inp.value="";tx("YOU",text);startTour();return;}
+    await demoAsk(text);return;}
   const inp=$("#brief");const text=inp.value.trim();
   if(!text){emptyNudge();return;}
   // voice/typed intents that never need the brain
@@ -1586,6 +1624,7 @@ $("#pipChip").onclick=async()=>{      // toggle the desktop BARS
 /* ---------------- missions ---------------- */
 let MISSIONS={},announced=new Set();
 async function deploy(){
+  if(demoMode){tx("BARS","Demo is ask-only - the operator runs the real missions. Ask me anything, though.");return;}
   const inp=$("#brief");const brief=inp.value.trim();
   if(!brief){emptyNudge();return;}
   inp.value="";tx("YOU","⟩ MISSION: "+brief);
@@ -1906,7 +1945,7 @@ function pttStop(cancel){
 
 /* ---------------- fleet panel: live city state, fail-closed ---------------- */
 async function fleetPoll(){
-  const box=$("#fleetList");if(!box)return;
+  const box=$("#fleetList");if(!box||demoMode)return;
   try{
     const r=await fetch("/api/fleet");
     if(r.status===401)return;              // the auth shim is handling login
@@ -2476,6 +2515,9 @@ function stopRealtime(){
     if(s.voice_name)curVoice=s.voice_name;
     if(s.trust)trust=s.trust;
     if(s.takeover_speed)takeoverSpeed=s.takeover_speed;
+    demoMode=(s.mode==="public"&&s.demo!==false);
+    if(demoMode)document.body.classList.add("demo");
+    window.__barsDemoMode=demoMode;
     if(s.pending)showPending("(queued before reload — open the transcript for details)");
     if(s.realtime){                       // GPT Realtime — true live WebRTC voice
       $("#liveBtn").style.display="";

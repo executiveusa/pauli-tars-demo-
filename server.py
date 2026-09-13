@@ -683,7 +683,9 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"var payloadObj={};try{payloadObj=JSON.parse(bodyText||'{}')}catch(e){}"
     b"var exec=function(){return of(u,o)};"
     b"return exec().then(function(r){"
-    b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'){"
+    b"if(r.status===401&&same&&p!=='/api/session'&&p!=='/api/status'&&!window.__barsDemoMode){"
+    b"return of('/api/status').then(function(sr){return sr.json()}).catch(function(){return{}}).then(function(st){"
+    b"if(st&&st.mode==='public'&&st.demo!==false){window.__barsDemoMode=true;return r;}"
     b"return new Promise(function(resolve){"
     b"if(document.getElementById('barsLoginModal')){resolve(r);return}"
     b"var d=el('div',null,'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:99998;display:flex;align-items:center;justify-content:center;font-family:monospace;padding:16px');"
@@ -705,7 +707,7 @@ AUTH_SHIM = (b"<script>(function(){if(!window.fetch)return;"
     b"okb.onclick=go;inp.onkeydown=function(e){if(e.key==='Enter')go()};"
     b"c.appendChild(inp);c.appendChild(err);c.appendChild(okb);c.appendChild(nob);d.appendChild(c);document.body.appendChild(d);"
     b"setTimeout(function(){try{inp.focus()}catch(e){}},50);"
-    b"})}"
+    b"})})}"
     b"if(r.status===409&&same){return r.clone().json().then(function(j){"
     b"if(j&&j.need_confirmation){return new Promise(function(resolve){"
     b"var bind=j.need_confirmation.bind_payload||payloadObj;"
@@ -732,6 +734,7 @@ def _inject_auth_shim(body):
 def _public_status():
     """Anonymous /api/status: enough for the public front door, nothing sensitive."""
     return {"ok": True, "service": "bars", "mode": "public",
+            "demo": DEMO_ENABLED,
             "brain": bool(CONFIG["anthropic_key"]),
             "voice": bool((CONFIG["el_key"] and CONFIG["el_voice"])
                           or os.environ.get("GROQ_API_TOKEN") or os.environ.get("GROQ_API_KEY")),
@@ -2308,6 +2311,85 @@ def tts_bytes(text):
         pass
     return None, None
 
+# ---------------------------------------------------------------- client demo
+# Public, no-login demo lane (owner ask 2026-09-13: "a fully working demo the
+# clients can test"). ASK-only: no missions, no fleet internals, no owner
+# memory, no tools. Voice rides the normal TTS lanes behind session + durable
+# daily caps; over cap or any failure the client falls back to browser speech.
+DEMO_ENABLED = os.environ.get("BARS_DEMO", "1").strip() != "0"
+DEMO_MSG_HOUR = int(os.environ.get("BARS_DEMO_MSG_HOUR", "20"))
+DEMO_MSG_DAY = int(os.environ.get("BARS_DEMO_MSG_DAY", "60"))
+DEMO_VOICE_SESSION = int(os.environ.get("BARS_DEMO_VOICE_SESSION", "25"))
+DEMO_VOICE_DAY = int(os.environ.get("BARS_DEMO_VOICE_DAY", "250"))
+_DEMO_LOCK = threading.Lock()
+_DEMO_MSG = {}              # ip -> [timestamps]
+_DEMO_VOICE_SESS = {}       # session id -> [timestamps]
+_DEMO_VOICE_PATH = os.path.join(DATA, "demo_voice.json")
+
+
+def _demo_rate_ok(ip):
+    now = time.time()
+    with _DEMO_LOCK:
+        if len(_DEMO_MSG) > 512:
+            for k in [k for k, v in _DEMO_MSG.items() if not v or now - v[-1] > 86400]:
+                _DEMO_MSG.pop(k, None)
+        hist = _DEMO_MSG.setdefault(ip, [])
+        hist[:] = [t for t in hist if now - t < 86400]
+        if sum(1 for t in hist if now - t < 3600) >= DEMO_MSG_HOUR \
+                or len(hist) >= DEMO_MSG_DAY:
+            return False
+        hist.append(now)
+        return True
+
+
+def _demo_voice_read():
+    try:
+        with open(_DEMO_VOICE_PATH) as f:
+            st = json.load(f)
+        if isinstance(st, dict) and "day" in st and "clips" in st:
+            return st
+    except Exception:
+        pass
+    return {"day": "", "clips": 0}
+
+
+def _demo_voice_ok(sid):
+    today = time.strftime("%Y-%m-%d")
+    now = time.time()
+    with _DEMO_LOCK:
+        st = _demo_voice_read()
+        if st.get("day") != today:
+            st = {"day": today, "clips": 0}
+        sess = _DEMO_VOICE_SESS.setdefault(sid, [])
+        sess[:] = [t for t in sess if now - t < 86400]
+        if len(sess) >= DEMO_VOICE_SESSION or int(st["clips"]) >= DEMO_VOICE_DAY:
+            return False
+        sess.append(now)
+        st["clips"] = int(st["clips"]) + 1
+        try:
+            tmp = _DEMO_VOICE_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(st, f)
+            os.replace(tmp, _DEMO_VOICE_PATH)
+        except Exception:
+            pass        # counter persistence is best-effort; in-memory cap holds
+        return True
+
+
+def _demo_persona():
+    return "\n\n".join((
+        CONSTITUTION_PROMPT,
+        BARS_OVERLAY_PROMPT,
+        "## Demo mode",
+        "You are in a public demo for visitors. Answer questions about yourself, "
+        "the studio, and the work. You cannot run missions, deploy agents, access "
+        "private data, or take actions here - if asked, say the operator runs the "
+        "real thing and keep it short.",
+        "This reply will be spoken aloud. Use no markdown, bullets, headers, emoji, URLs, "
+        "or codes. Default to two or three short sentences.",
+    ))
+
+
 # ---------------------------------------------------------------- http
 
 class Handler(BaseHTTPRequestHandler):
@@ -2488,6 +2570,71 @@ class Handler(BaseHTTPRequestHandler):
                                               "ttl_seconds": ttl,
                                               "bind_payload": data}}, 409)
             return False
+
+    def _demo_ask(self):
+        """Public demo chat. No missions, tools, fleet, or owner memory;
+        per-IP rate limits; every call receipted with a hashed IP."""
+        ip = self._client_ip()
+        if not _demo_rate_ok(ip):
+            self._json({"error": "demo rate limit - try again later", "demo": True}, 429)
+            return
+        data = self._body()
+        text = (data.get("text") or "").strip()[:1000]
+        if not text:
+            self._json({"error": "empty"}, 400); return
+        history = data.get("history") or []
+        msgs = [{"role": h["role"], "content": str(h["content"])[:1000]}
+                for h in history[-6:]
+                if isinstance(h, dict) and h.get("role") in ("user", "assistant")]
+        msgs.append({"role": "user", "content": text})
+        t0 = time.time()
+        try:
+            reply = anthropic_chat(_demo_persona(), msgs, max_tokens=350)
+        except Exception as e:
+            _receipt({"kind": "demo", "lane": "demo.ask", "ok": False,
+                      "error": str(e)[:160]})
+            self._json({"error": "brain offline right now - try again in a minute",
+                        "demo": True}, 502)
+            return
+        reply = re.sub(r"\[(DEPLOY|ACT|TOOL|SEE|FOLLOWUP)[^\]]*\]", "",
+                       (reply or "")).strip()
+        _receipt({"kind": "demo", "lane": "demo.ask", "ok": True,
+                  "ms": int((time.time() - t0) * 1000),
+                  "ip_hash": hashlib.sha256(ip.encode()).hexdigest()[:12]})
+        self._json({"reply": reply, "demo": True})
+
+    def _demo_tts(self):
+        """Public demo voice: normal TTS lanes behind session + durable daily
+        caps. Over cap or any failure -> fallback JSON (browser speech)."""
+        ip = self._client_ip()
+        data = self._body()
+        text = (data.get("text") or "").strip()[:900]
+        if not text:
+            self._json({"error": "empty"}, 400); return
+        sid = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("session") or ""))[:40] \
+            or "ip:" + hashlib.sha256(ip.encode()).hexdigest()[:16]
+        if not _demo_voice_ok(sid):
+            _receipt({"kind": "demo", "lane": "demo.tts", "ok": False,
+                      "error": "voice cap reached"})
+            self._json({"fallback": True, "browser_fallback": True, "capped": True}, 200)
+            return
+        try:
+            audio, ctype = tts_bytes(text)
+        except Exception as e:
+            _receipt({"kind": "demo", "lane": "demo.tts", "ok": False,
+                      "error": str(e)[:160]})
+            audio, ctype = None, None
+        if not audio:
+            self._json({"fallback": True, "browser_fallback": True}, 200)
+            return
+        _receipt({"kind": "demo", "lane": "demo.tts", "ok": True,
+                  "bytes": len(audio)})
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(audio)))
+        self.end_headers()
+        self.wfile.write(audio)
 
     def _voice_gate(self, action, data, recipient, est_tokens):
         """Voice lanes (/stt, /tts). Owner-approved policy change (2026-09-13,
@@ -2786,6 +2933,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/session/logout":
             SESSIONS.destroy(_cookie(self.headers, "bars_session"))
             self._json({"ok": True}); return
+        if DEMO_ENABLED and path == "/ask":
+            self._demo_ask()
+            return
+        if DEMO_ENABLED and path == "/demo/tts":
+            self._demo_tts()
+            return
         if not _token_ok(self.headers, mutate=True):
             if self._presented_credential() and self._throttle_auth_fail():
                 self._json({"error": "rate limited", "retry_after": 60}, 429)
