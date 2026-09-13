@@ -1015,8 +1015,8 @@ function sayBrowser(text){return new Promise(res=>{
 /* ---------------- canned personality ---------------- */
 const GREET=[
  "BARS online. The culture runs deep.",
- "BARS online. Settings loaded. Try not to waste them.",
- "Systems nominal. What's the mission?"];
+ "Studio's open. What are we cooking?",
+ "Mic's warm. What's the mission?"];
 const DEPLOY_ACK=[
  "Copy. {A} is deploying. See you on the other side.",
  "On it. {A} doesn't sleep.",
@@ -1069,14 +1069,12 @@ const TRUST_Q={"draft-safe":"Draft-safe. I look, I don't touch.",
 
 /* ---------------- mission idea chips ---------------- */
 const CHIPS=[
- "Build me a tip calculator web app — dark theme, big buttons, remembers the last tip percent",
- "Find 10 moving companies in Austin with 3–4 star reviews and rank them as my easiest Reputation Builder prospects",
- "squad: research this week's AI news, what the Agent-OS creators posted, AND trending AI tools — pitch me 3 video ideas from it",
- "Audit citevue.com for AI-search readiness and give me the top 5 fixes",
- "Draft a cold email selling a GEO audit to a local dentist with an outdated website",
- "Compare Skool vs Circle vs Discord for a paid AI community in 2026 and tell me where I should be",
- "Find 5 trending AI tools launched this month I could build a video around",
- "Research what SaaS founders complain about most on Reddit this month — product ideas in it?"];
+ "Cook up 3 concept directions for my next single - mood, tempo, reference tracks, and a one-line hook for each",
+ "Research what independent artists are complaining about on Reddit this month and pitch me 5 content ideas from it",
+ "Sketch a 30-day rollout plan for my EP: singles, visuals, and what to post where",
+ "Build me a link-in-bio page for my music - dark theme, my latest video on top",
+ "Break down why this reference track hits: structure, sounds, and what I can steal for my own",
+ "Find 10 playlist curators and blogs that cover my lane and draft the pitch for each"];
 (()=>{const box=$("#chips");
  for(const c of CHIPS){const d=document.createElement("div");d.className="chip";d.textContent=c;
    d.onclick=()=>{$("#brief").value=c;$("#brief").focus();};box.appendChild(d);}})();
