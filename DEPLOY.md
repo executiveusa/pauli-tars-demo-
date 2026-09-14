@@ -28,6 +28,14 @@ static visual reference/fallback only — it is not a backend.
      decided BARS voice on `/tts`. Optional: without it the lane order stays
      ElevenLabs -> Groq Orpheus -> browser speech; nothing breaks.
    - `BARS_FLEET_API_TOKEN` = the canonical read-only city-state token (Infisical: `CANONICAL_API_TOKEN`) - powers `/api/fleet` + the console FLEET panel. Optional: without it the panel reports "fleet token not configured" and chat loses fleet awareness; nothing breaks.
+   - `BARS_TRUSTED_PROXIES` = comma-separated proxy peer IPs allowed to supply
+     `X-Forwarded-For` (default: loopback only). Required whenever Caddy
+     reaches BARS from a non-loopback address (host systemd Caddy behind a
+     provider NAT, docker bridge egress). Current VPS value: `127.0.0.1,10.0.0.1`.
+     Without the correct entry every visitor shares one attributed IP, so one
+     stuck client's login failures lock out everyone. Verify after deploy:
+     `curl -s https://bars.thepaulieffect.com/api/status` from a phone must
+     echo the phone's own IP in `client_ip`, not a Caddy/NAT address.
 4. DNS: `bars.thepaulieffect.com` A record → `31.220.58.212`, DNS-only
    (grey cloud) in the Cloudflare zone `96712684919a639674c22fee58732ed9`.
 
@@ -122,6 +130,14 @@ not, since the key comes from the env). To remove the anchor from the
 writable data domain entirely, set `BARS_RECEIPT_ANCHOR_PATH` in the
 environment (e.g. `/etc/bars/receipt.anchor` on a read-only-mounted file) so
 the anchor file is stored outside `/data`. The HMAC check runs either way.
+Anchor writes are atomic in the anchor's own directory (cross-device safe).
+If the anchor is lost while the ledger and state file survive (wiped anchor
+volume, redeploy without the mount, container recreate), the default stays
+fail-closed. To recover: set `BARS_RECEIPT_ANCHOR_RECOVER=1` for ONE restart -
+the anchor is rebuilt only after the full HMAC chain verifies against the
+durable state (any mismatch stays fail-closed), the recovery is logged in
+`startup_findings`, and receipts resume. Unset the variable again right after
+the recovering restart.
 
 ### Full-wipe trust limitation
 

@@ -276,12 +276,71 @@ class ReceiptLedger:
                 f"anchor seq {anchor['seq']} ahead of state seq {self._seq}: truncation suspected")
         ledger_exists = os.path.exists(self.path) and os.path.getsize(self.path) > 0
         if ledger_exists and anchor is None and not self._broken and os.path.exists(self._state_path):
-            self.startup_findings.append("anchor missing for non-empty ledger: fail-closed")
-            self._broken = True
+            # default stays fail-closed (adv-v4-3): a missing anchor on a
+            # non-empty ledger is an integrity event. The escape hatch is an
+            # explicit one-shot operational decision: with
+            # BARS_RECEIPT_ANCHOR_RECOVER=1 the anchor is rebuilt ONLY after
+            # the full chain verifies against the durable state. Unset it
+            # again immediately after the recovering restart.
+            if os.environ.get("BARS_RECEIPT_ANCHOR_RECOVER") == "1" and self._recover_anchor():
+                self.startup_findings.append(
+                    "anchor missing at startup: rebuilt from fully verified chain "
+                    "(BARS_RECEIPT_ANCHOR_RECOVER)")
+            else:
+                self.startup_findings.append("anchor missing for non-empty ledger: fail-closed")
+                self._broken = True
         if self._broken:
             self.write_failures += 1
             if not self.last_error:
                 self.last_error = "receipt integrity failure at startup (fail-closed)"
+
+    def _verify_full_chain(self):
+        """Recompute the HMAC chain over the ENTIRE current ledger file and
+        require the tip to match the durable state exactly (hmac + seq).
+        Strict sequencing: appends step seq by 1, checkpoints keep it."""
+        try:
+            prev, last_seq = "", 0
+            with open(self.path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    ev = json.loads(line)
+                    mac = ev.pop("_h", None)
+                    sq = ev.get("seq")
+                    if ev.get("kind") == "_checkpoint":
+                        prev = ev.get("prev_file_hmac", "")
+                        if last_seq == 0:
+                            last_seq = sq or 0   # rotation resume: adopt tip seq
+                        elif sq != last_seq:
+                            return False
+                    else:
+                        if sq != last_seq + 1:
+                            return False
+                    core = json.dumps(ev, sort_keys=True)
+                    want = hmac.new(self._key, (prev + core).encode(),
+                                    hashlib.sha256).hexdigest()
+                    if not hmac.compare_digest(want, str(mac or "")):
+                        return False
+                    prev = mac
+                    last_seq = sq
+            return prev == self._prev and last_seq == self._seq and last_seq > 0
+        except Exception:
+            return False
+
+    def _recover_anchor(self):
+        """The anchor is a second, separately-located copy of the chain tip.
+        Losing it (wiped anchor volume, cross-device rename failure, container
+        redeploy without the anchor path mounted) is not evidence of tampering
+        when the ledger itself verifies end-to-end against the durable state.
+        Rebuild it; any mismatch refuses recovery and stays fail-closed."""
+        try:
+            if not self._verify_full_chain():
+                return False
+            self._write_anchor()
+            return True
+        except Exception:
+            return False
 
     def _read_anchor(self):
         """Anchor is verified against its HMAC; corrupt anchors are findings,
@@ -308,7 +367,12 @@ class ReceiptLedger:
         written 0600 to a separate file so single-file tampering is detectable."""
         body = json.dumps({"seq": self._seq, "prev": self._prev}, sort_keys=True)
         mac = hmac.new(self._key, body.encode(), hashlib.sha256).hexdigest()
-        fd, tmp = tempfile.mkstemp(prefix=".ranchor-", dir=os.path.dirname(self.path) or ".")
+        # tempfile must live in the ANCHOR's directory: when the anchor is
+        # configured outside the data volume (different filesystem), a tempfile
+        # created beside the ledger makes os.replace fail cross-device and
+        # strands .ranchor-* files while the anchor is never written.
+        fd, tmp = tempfile.mkstemp(prefix=".ranchor-",
+                                   dir=os.path.dirname(self._anchor_path) or ".")
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps({"seq": self._seq, "prev": self._prev, "_h": mac}))
         os.chmod(tmp, 0o600)
@@ -401,11 +465,21 @@ class ReceiptLedger:
                 if (os.path.exists(self.path) and os.path.getsize(self.path) > 0
                         and (not os.path.exists(self._anchor_path)
                              or not os.path.exists(self._state_path))):
-                    self._broken = True
-                    self.write_failures += 1
-                    self.last_error = "receipt anchor/state disappeared at runtime (fail-closed)"
-                    os.close(lfd)
-                    return
+                    recovered = False
+                    if (os.environ.get("BARS_RECEIPT_ANCHOR_RECOVER") == "1"
+                            and not os.path.exists(self._anchor_path)
+                            and os.path.exists(self._state_path)):
+                        st0 = self._load_state()
+                        if isinstance(st0.get("seq"), int) and st0.get("prev"):
+                            self._seq = max(self._seq, st0["seq"])
+                            self._prev = st0["prev"]
+                            recovered = self._recover_anchor()
+                    if not recovered:
+                        self._broken = True
+                        self.write_failures += 1
+                        self.last_error = "receipt anchor/state disappeared at runtime (fail-closed)"
+                        os.close(lfd)
+                        return
                 # reload chain state UNDER the lock: a second process may have
                 # appended since this one initialized
                 st = self._load_state()
