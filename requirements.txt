@@ -4,11 +4,11 @@
 
 # Screen takeover (hands.py) — Windows:
 pyautogui>=0.9.54
-mss>=9.0.1
-Pillow>=10.0.0
+mss>=10.2.0
+Pillow>=12.3.0
 
 # Desktop character (presence.py) — Windows/Linux:
-PyQt6>=6.6.0
+PyQt6>=6.11.0
 
 # Screen takeover (hands.py) — macOS (install pyobjc when needed):
 # pyobjc-core>=10.0
