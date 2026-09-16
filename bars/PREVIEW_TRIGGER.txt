@@ -1,0 +1,2 @@
+BARS Hermes preview trigger
+Final patch head should include the Hermes bridge, capability registry, mission routing, status reporting, profile, overlay manifest, builder script, and environment contract.
