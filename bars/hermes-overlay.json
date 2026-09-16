@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "name": "bars-hermes-overlay",
+  "description": "Portable BARS overlay extracted from Pauli Hermes and applied to a clean current NousResearch/hermes-agent base.",
+  "upstream": {
+    "repository": "NousResearch/hermes-agent",
+    "verified_commit_2026_09_16": "8c8003f80b528377d4387b96faa2c00283168d68"
+  },
+  "source": {
+    "repository": "executiveusa/pauli-hermes-agent",
+    "ref": "main"
+  },
+  "rules": {
+    "copy_secrets": false,
+    "copy_auth_state": false,
+    "copy_runtime_memory": false,
+    "copy_provider_credentials": false,
+    "overwrite_upstream_core": false,
+    "skills_only_by_default": true
+  },
+  "required_skills": [
+    "skills/adhd-elegant-simplicity-v2",
+    "skills/agent-maxx",
+    "skills/gauntlet-loop",
+    "skills/hardened-longrun-subagent-harness",
+    "skills/studio/vibe-client-factory",
+    "skills/studio/cinematic-master-editor",
+    "skills/studio/cinematic-2-5d-scenes",
+    "skills/studio/interactive-artifact",
+    "skills/studio/website-design"
+  ],
+  "optional_skills": [
+    "skills/21st-dev-mcp",
+    "skills/agent-reach",
+    "skills/api-opportunity-orchestrator",
+    "skills/art-of-reduction",
+    "skills/autonomous-ai-agents",
+    "skills/browser-hosting-deployer",
+    "skills/local-footage-studio",
+    "skills/scroll-media-operator",
+    "skills/social-drop-factory",
+    "skills/riverside-flow",
+    "skills/youtube-channel-operator",
+    "skills/workflows/sovereign-vps-operator",
+    "skills/studio/awwwards-design-intelligence",
+    "skills/studio/campaign-factory"
+  ],
+  "external_adapters": [
+    {
+      "id": "composio",
+      "kind": "mcp",
+      "url": "https://connect.composio.dev/mcp",
+      "secret_location": "runtime only"
+    },
+    {
+      "id": "opensuno",
+      "kind": "mcp-or-http",
+      "repository": "paean-ai/opensuno",
+      "secret_location": "adapter runtime only"
+    },
+    {
+      "id": "visual-provider",
+      "kind": "provider-adapter",
+      "note": "Use this boundary for Phyla or any later image/video provider after its current API is verified."
+    }
+  ]
+}
