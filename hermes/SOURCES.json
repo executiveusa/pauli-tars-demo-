@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-16T21:40:00Z",
+  "runtime": {
+    "repository": "https://github.com/NousResearch/hermes-agent.git",
+    "commit": "8c8003f80b528377d4387b96faa2c00283168d68",
+    "role": "authoritative Hermes runtime",
+    "policy": "install exact commit; never replace it with the customized fork"
+  },
+  "overlay": {
+    "repository": "https://github.com/executiveusa/pauli-hermes-agent.git",
+    "commit": "b059ecd0826f0e0a03f7c6c0c8060644dd2c08e2",
+    "registry": "skills/SKILL_REGISTRY.json",
+    "role": "Bambu/Pauli custom skills and workflow overlay",
+    "policy": "extract enabled registry skills into the Hermes user-skill tree; do not overlay runtime Python code"
+  },
+  "bars": {
+    "repository": "https://github.com/executiveusa/pauli-tars-demo-.git",
+    "base_commit": "98afe757427a2e6571d4d78c3412e2ef1576f6af",
+    "role": "persona, sovereign HTTP shell, receipts, approvals, memory, artist product surface"
+  },
+  "capability_policy": {
+    "default_profile": "bars",
+    "default_toolsets": ["hermes-api-server", "video", "connections"],
+    "kanban": "opt-in only",
+    "paid_provider": "disabled until BARS_HERMES_ALLOW_PAID=1",
+    "shell_yolo": "forbidden",
+    "credentials": "environment or Hermes secret/auth stores only; never source control"
+  }
+}
