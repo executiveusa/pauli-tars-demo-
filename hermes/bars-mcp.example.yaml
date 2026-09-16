@@ -1,0 +1,35 @@
+# Merge these entries into the BARS Hermes profile config.yaml.
+# Keep credentials out of this file. Remote app authorization happens through
+# the provider's OAuth flow; local bridges keep their sessions on the local host.
+
+mcp_servers:
+  composio:
+    url: "https://connect.composio.dev/mcp"
+    tools:
+      # Composio Connect intentionally exposes a small meta-tool surface that
+      # discovers/authorizes/executes across connected apps. Do not expand this
+      # into hand-written app credentials in BARS.
+      resources: false
+      prompts: false
+
+  opensuno:
+    # OpenSuno Bridge Mode: Chrome extension + local bridge. Never publish the
+    # local endpoint or Suno session material to Vercel/source control.
+    url: "http://127.0.0.1:3001/mcp"
+    tools:
+      include:
+        - get_credits
+        - generate
+        - custom_generate
+        - generate_lyrics
+        - get_audio
+        - extend_audio
+        - generate_stems
+        - concat
+      resources: false
+      prompts: false
+
+# Hermes already supplies native web/browser, GitHub-capable terminal workflows,
+# image generation, video generation, video analysis, delegation, code execution,
+# file tools, memory, skills, and the interactive connection/catalog layer.
+# Add a new MCP server only when a native Hermes tool does not already solve it.
