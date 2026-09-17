@@ -29,7 +29,7 @@ def cycle(bound, tag):
     server._COST_CAP.mission = key
     try:
         server._cap_reserve(key, 100)
-        barrier.wait(timeout=5)                     # both registered+reserved now
+        barrier.wait(timeout=5)
         time.sleep(0.05)
         e = server.MISSION_CAPS.get(key)
         if not e or e["used"] != 100 or e["bound"] != bound:
@@ -47,7 +47,6 @@ check("adv-v9-1a concurrent presplit cycles: independent accounting, no cross-re
       not errs and not leftovers, f"errs={errs} leftovers={leftovers}")
 
 # adv-v9-1b: two concurrent squad confirmations over HTTP both succeed
-# patched mock: squad split needs a JSON-array reply for these briefs
 mocksrc = open(os.path.join(ROOT, "tests", "mock_provider.py")).read()
 anchor = ('        if user.startswith("MOCKSAY "):\n'
           '            txt = user[len("MOCKSAY "):]          # verbatim: marker-injection tests\n'
@@ -140,7 +139,7 @@ check("adv-v9-9e bounded follow-up completes under its cap", st == "COMPLETE", s
 H13 = mint("mission.exec", {"id": "deadbeef"}, "/followup")
 s, h, b = req("POST", "/followup", {"id": "deadbeef"}, H13)
 r1 = (s, b.get("error"))
-s, h, b = req("POST", "/followup", {"id": "deadbeef"}, H13)   # same confirmation again
+s, h, b = req("POST", "/followup", {"id": "deadbeef"}, H13)
 r2 = (s, b.get("error"))
 check("adv-v9-13 dead follow-up: 400 without consuming the single-use confirmation",
       r1[0] == 400 and r2[0] == 400 and "no follow-up" in str(r1[1]) and "no follow-up" in str(r2[1]),
@@ -151,7 +150,7 @@ srv.terminate(); srv.wait(5); mock.terminate()
 # adv-v9-2: OCR supply-chain pin is two levels deep and documented honestly
 wf = open(os.path.join(ROOT, ".github/workflows/vibe-code-review.yml")).read()
 doc = open(os.path.join(ROOT, "docs/SOFTWARE_FACTORY_GATE.md")).read()
-CALLER = "864933213372cc488b3f2f2b1deaab84ea91b855"
+CALLER = "2fab76c0695d83d3ddb71be8ae4bc7e498a9137c"
 ACTION = "2d685ab0d057aec8255f18cd0a5f5a14fbfd5195"
 import re as _re
 _uses = _re.findall(r"uses:\s*executiveusa/open-code-review[^\s]*", wf)
@@ -194,7 +193,7 @@ server._cap_credit("squad-test", _split_used)
 credited = server.MISSION_CAPS["squad-test"]["used"]
 err4 = None
 try:
-    server._cap_reserve("squad-test", 10)     # 15 credited + 10 > 20 bound
+    server._cap_reserve("squad-test", 10)
 except RuntimeError as e:
     err4 = str(e)
 check("adv-v9-4 settled split actual credited into squad cap; bound accounts it fail-closed",
@@ -282,7 +281,7 @@ check("adv-v9-8 docker test covers failed-health, --with-data cycle, snapshot fa
 m10 = {"id": "deadrace", "brief": "race window", "kind": "OPS", "events": [],
        "_abort": True, "status": "ABORTING", "t_start": time.time(), "t_end": None,
        "agent": "CASE", "parent": None, "cap_key": "deadrace"}
-server._cap_register("deadrace", 8192)          # solo mission carries its own cap
+server._cap_register("deadrace", 8192)
 server.MISSIONS["deadrace"] = m10
 called10 = []
 _orig_ac = server.anthropic_chat
@@ -305,8 +304,7 @@ check("adv-v9-10b pre-call abort releases the dead solo cap",
       "deadrace" not in server.MISSION_CAPS, str(list(server.MISSION_CAPS)))
 del server.MISSIONS["deadrace"]
 
-# adv-v9-11: abort landing DURING the first model call (post-call path) also
-# closes out and releases the dead solo cap
+# adv-v9-11: abort landing DURING the first model call also closes out
 m11 = {"id": "midrace1", "brief": "race window post", "kind": "OPS", "events": [],
        "status": "EN ROUTE", "t_start": time.time(), "t_end": None,
        "agent": "CASE", "parent": None, "cap_key": "midrace1"}
@@ -315,7 +313,7 @@ server.MISSIONS["midrace1"] = m11
 called11 = []
 def _abort_during_call(*a, **k):
     called11.append(1)
-    m11["_abort"] = True                  # abort lands while the call is in flight
+    m11["_abort"] = True
     return "report body"
 server.anthropic_chat = _abort_during_call
 try:
