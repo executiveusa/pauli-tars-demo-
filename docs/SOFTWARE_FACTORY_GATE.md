@@ -4,8 +4,7 @@ Every candidate build in the Software Factory (BARS/TARS included) passes TWO
 independent gates before anything ships. The builder never self-approves.
 
 1. **Open Code Review flow** (repository-defined, from
-   `executiveusa/open-code-review` reusable workflow @ 2fab76c0695d83d3ddb71be8ae4bc7e498a9137c (internal action remains integrity-pinned by that reviewed reusable workflow),
-   installed via its own `scripts/install-vibe-review.mjs`):
+   `executiveusa/open-code-review` reusable workflow @ `2fab76c0695d83d3ddb71be8ae4bc7e498a9137c`, the current timeout-hardened immutable revision; its reviewed internal action chain includes `executiveusa/open-code-review@2d685ab0d057aec8255f18cd0a5f5a14fbfd5195`):
    - Agent skill `vibe-project-review` (`.agents/`, `.claude/`, `.codex/`,
      `.cursor/`, `.github/skills/`): review contract = MODE / OUTCOME / TARGET /
      CONSTRAINTS / PROOF / COMMERCIAL VALUE; scope = workspace | branch |
@@ -13,8 +12,10 @@ independent gates before anything ships. The builder never self-approves.
      PASS, PASS WITH DISPOSITIONS, BLOCKED, NOT RUN.
    - Managed `VIBE_REVIEW` block in `AGENTS.md` (markers VIBE_REVIEW:START/END).
    - Independent CI: `.github/workflows/vibe-code-review.yml` calls the central
-reusable workflow `executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@2fab76c0695d83d3ddb71be8ae4bc7e498a9137c` (SHA-pinned, never a floating branch). The current pin is the reviewed timeout-hardened revision used by this repository. Candidate code cannot change the centrally pinned review policy because the reusable workflow is referenced by immutable commit SHA.
-     on every non-draft PR.
+     reusable workflow `executiveusa/open-code-review/.github/workflows/vibe-code-review.yml@2fab76c0695d83d3ddb71be8ae4bc7e498a9137c` (SHA-pinned, never a floating branch), with exact `ocr_version: "1.11.8"`.
+   - **Trusted judge policy:** candidate code cannot supply its own judge policy. The candidate-checked-out `.opencodereview/rule.json` is forbidden. CI uses the **centrally pinned policy** carried by the immutable review chain.
+   - **Two-level integrity chain:** caller reusable workflow `2fab76c0695d83d3ddb71be8ae4bc7e498a9137c` -> reviewed internal action `2d685ab0d057aec8255f18cd0a5f5a14fbfd5195`. Both are immutable SHA references; the caller never uses `@main`.
+   - **INFO residual:** GitHub-hosted runner images, GitHub Actions infrastructure, registry/release availability, and the externally stored review-model secret remain infrastructure dependencies. They are not controlled by the candidate and are recorded as residual trust rather than hidden.
 2. **Independent security review** (parent-owned reviewer): the reviewer is
    never the builder. SHIP requires both gates green; anything else is HOLD.
 
