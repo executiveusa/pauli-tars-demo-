@@ -34,9 +34,10 @@ for _ in range(40):
 s,b = req({"text":"what time is it in Seoul?"})
 ok1 = s==500 and "fail-closed" in str(b.get("error",""))
 print("PASS paid route fail-closed" if ok1 else f"FAIL {s} {b}")
-# budget path: enable paid with tiny budget -> first call ok, then exhaust
+# budget path: choose a cap just above one conservative reservation (~5k),
+# then prove settled actual usage + the next reservation cannot cross the cap.
 srv.send_signal(15); srv.wait(timeout=10)
-env2 = dict(env, BARS_ALLOW_PAID="1", BARS_PAID_TOKEN_BUDGET="3800")
+env2 = dict(env, BARS_ALLOW_PAID="1", BARS_PAID_TOKEN_BUDGET="5010")
 srv2 = subprocess.Popen([sys.executable,"server.py"], cwd=ROOT, env=env2,
                         stdout=open("/tmp/bars4.log","w"), stderr=subprocess.STDOUT)
 for _ in range(40):
