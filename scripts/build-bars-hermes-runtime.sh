@@ -8,6 +8,8 @@ set -euo pipefail
 # The script intentionally operates on local working trees so a software factory can
 # review diffs, run upstream tests, and only then publish/deploy the runtime.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SOURCE=${1:-}
 UPSTREAM=${2:-}
 OUTPUT=${3:-./.bars-runtime}
@@ -79,6 +81,25 @@ copy_skill() {
 for rel in "${required[@]}"; do copy_skill "$rel" required; done
 for rel in "${optional[@]}"; do copy_skill "$rel" optional; done
 
+# Install the BARS-native lean router and machine-readable live registry from this repo.
+# These contracts are distinct from external skill bodies: a manifest-contract is routable,
+# but must not be reported as a physically resolved third-party skill package.
+[[ -f "$REPO_ROOT/.agents/skills/bars-skill-router/SKILL.md" ]] || {
+  echo "missing BARS router skill" >&2
+  exit 68
+}
+[[ -f "$REPO_ROOT/bars/skills/live-registry.json" ]] || {
+  echo "missing BARS live skill registry" >&2
+  exit 69
+}
+mkdir -p "$OUTPUT/skills/bars-skill-router" "$OUTPUT/bars/skills"
+cp -a "$REPO_ROOT/.agents/skills/bars-skill-router/." "$OUTPUT/skills/bars-skill-router/"
+cp -a "$REPO_ROOT/bars/skills/live-registry.json" "$OUTPUT/bars/skills/live-registry.json"
+python -m json.tool "$OUTPUT/bars/skills/live-registry.json" >/dev/null
+
+echo "installed: skills/bars-skill-router"
+echo "installed: bars/skills/live-registry.json"
+
 mkdir -p "$OUTPUT/bars"
 cat > "$OUTPUT/bars/PROFILE.md" <<'PROFILE'
 # BARS Hermes profile
@@ -86,10 +107,15 @@ cat > "$OUTPUT/bars/PROFILE.md" <<'PROFILE'
 BARS is the artist-product and media operator profile.
 
 - use Hermes tools/skills rather than simulating actions
+- route work through `bars/skills/live-registry.json` and `skills/bars-skill-router`
+- prefer one canonical entry point per overlapping skill family
+- keep archived/template skill catalogs out of live context unless explicitly requested
+- preserve the PARÉ spine as one coherent design doctrine
 - prefer scoped APIs/MCP/Composio to browser automation
 - preserve source/asset provenance and owner control
 - use separate builder and critic for release-bound creative work
 - never claim an external action succeeded without evidence
+- never claim a manifest-contract skill body is physically installed unless its source path resolves
 - require approval for publishing, spending, destructive changes or account mutations
 - keep providers replaceable behind adapters
 PROFILE
@@ -128,6 +154,8 @@ upstream=$UPSTREAM
 output=$OUTPUT
 required_skills=${#required[@]}
 optional_skills=${#optional[@]}
+bars_router_skill=installed
+bars_live_registry=installed
 status=BUILT_NOT_VERIFIED
 next=run upstream tests, start Hermes API server, then execute BARS integration smoke tests
 EOF

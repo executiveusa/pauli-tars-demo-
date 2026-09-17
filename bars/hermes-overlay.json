@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "bars-hermes-overlay",
   "description": "Portable BARS overlay extracted from Pauli Hermes and applied to a clean current NousResearch/hermes-agent base.",
   "upstream": {
@@ -10,13 +10,18 @@
     "repository": "executiveusa/pauli-hermes-agent",
     "ref": "main"
   },
+  "bars_skill_registry": "bars/skills/live-registry.json",
+  "local_router_skill": ".agents/skills/bars-skill-router",
   "rules": {
     "copy_secrets": false,
     "copy_auth_state": false,
     "copy_runtime_memory": false,
     "copy_provider_credentials": false,
     "overwrite_upstream_core": false,
-    "skills_only_by_default": true
+    "skills_only_by_default": true,
+    "one_entry_point_per_skill_family": true,
+    "archive_catalog_out_of_live_context": true,
+    "no_install_claim_without_resolved_body": true
   },
   "required_skills": [
     "skills/adhd-elegant-simplicity-v2",

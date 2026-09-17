@@ -9,6 +9,7 @@ on:
       - "deploy/**"
       - "scripts/**"
       - ".agents/skills/loop-engineering/**"
+      - ".agents/skills/bars-skill-router/**"
       - ".github/workflows/bars-hermes-production-gate.yml"
   push:
     branches: [main]
@@ -43,6 +44,15 @@ jobs:
         run: |
           python -m json.tool bars/hermes-overlay.json >/dev/null
           python -m json.tool bars/artist-production-loop.json >/dev/null
+          python -m json.tool bars/skills/live-registry.json >/dev/null
+      - name: Lean skill router contract
+        run: |
+          test -f .agents/skills/bars-skill-router/SKILL.md
+          grep -q "one canonical entry point" .agents/skills/bars-skill-router/SKILL.md
+          grep -q "PARÉ spine" .agents/skills/bars-skill-router/SKILL.md
+          grep -q '"pare_spine"' bars/skills/live-registry.json
+          grep -q '"adversarial-review-pass"' bars/skills/live-registry.json
+          grep -q '"icm-pricing"' bars/skills/live-registry.json
       - name: Loop governor present
         run: |
           grep -q "INTENT -> BAR -> LOCK" .agents/skills/loop-engineering/SKILL.md

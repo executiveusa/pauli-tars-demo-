@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "name": "bars-lean-live-skill-registry",
+  "source": {
+    "kind": "owner-supplied-audit-manifest",
+    "note": "Canonical BARS routing cut derived from the 370-skill audit. Archive/template-spam families are intentionally excluded from live routing."
+  },
+  "policy": {
+    "one_sentence_reach_rule": true,
+    "prefer_one_entry_point_per_family": true,
+    "pare_spine_is_atomic": true,
+    "archive_not_live_context": true,
+    "no_install_claim_without_resolved_body": true
+  },
+  "lanes": {
+    "factory_judge": ["make-a-plan","spec-drafting","spike","test-driven-development","systematic-debugging","simplify-code","security-sweep","pre-commit-verification","adversarial-review-pass","deploy-checklist","source-triangulation"],
+    "creative": ["creative-ideation","voice-match","pare-humanize","frontend-design","html-ppt","canvas-design"],
+    "ugc_video": ["short-form-script","ugc-brief","video-shortform","youtube-clipper"],
+    "three_d": ["threejs"],
+    "voice": ["speech"],
+    "agency": ["client-presence-audit","landing-copy","pitch-deck","lead-scouting","support-replies"],
+    "ops": ["commitment-tracking","inbox-triage","digest-composer","feed-watch","relationship-log","work-splitting","web-research","opportunity-scan","icm-pricing"]
+  },
+  "skills": {
+    "make-a-plan": {"lane":"factory_judge","reach_for":"Start any build task by writing the approach before code.","body_status":"manifest-contract"},
+    "spec-drafting": {"lane":"factory_judge","reach_for":"Turn a fuzzy idea into the smallest buildable version with acceptance criteria.","body_status":"manifest-contract"},
+    "spike": {"lane":"factory_judge","reach_for":"Run a throwaway experiment before committing to a risky implementation.","body_status":"manifest-contract"},
+    "test-driven-development": {"lane":"factory_judge","reach_for":"Enforce RED-GREEN-REFACTOR during implementation.","body_status":"manifest-contract"},
+    "systematic-debugging": {"lane":"factory_judge","reach_for":"Find root cause with a tight failing/passing loop before fixing.","body_status":"manifest-contract"},
+    "simplify-code": {"lane":"factory_judge","reach_for":"Make code smaller and clearer without changing behavior.","body_status":"manifest-contract"},
+    "security-sweep": {"lane":"factory_judge","reach_for":"Check secrets, injection, authentication and authorization with demonstrated findings.","body_status":"manifest-contract"},
+    "pre-commit-verification": {"lane":"factory_judge","reach_for":"Verify changes before commit, including an independent review pass.","body_status":"manifest-contract"},
+    "adversarial-review-pass": {"lane":"factory_judge","reach_for":"Try to break the work, refute findings, then report only surviving issues.","modes":["adversarial-ux","design-review","code-review","pr-feedback-quality-gate","critique","plan-design-review"],"body_status":"manifest-contract"},
+    "deploy-checklist": {"lane":"factory_judge","reach_for":"Reproduce the build, fix the real deploy error and verify live runtime behavior.","body_status":"manifest-contract"},
+    "source-triangulation": {"lane":"factory_judge","reach_for":"Confirm load-bearing claims against independent sources.","body_status":"manifest-contract"},
+
+    "creative-ideation": {"lane":"creative","reach_for":"Route creative work through a named method instead of first-thought lists.","body_status":"manifest-contract"},
+    "voice-match": {"lane":"creative","reach_for":"Study the owner's real writing, name the voice and draft in it.","body_status":"manifest-contract"},
+    "pare-humanize": {"lane":"creative","reach_for":"Remove AI patterns while preserving approved meaning and brand voice.","body_status":"manifest-contract"},
+    "frontend-design": {"lane":"creative","reach_for":"Use one canonical frontend build skill instead of overlapping UI skill families.","modes":["frontend-dev","ui-skills","ui-ux-pro","shadcn","web-design-guidelines","theme-factory","tweaks"],"body_status":"manifest-contract"},
+    "html-ppt": {"lane":"creative","reach_for":"Use one deck engine with themes instead of many deck-template skills.","body_status":"manifest-contract"},
+    "canvas-design": {"lane":"creative","reach_for":"Create posters and static visual compositions.","body_status":"manifest-contract"},
+
+    "short-form-script": {"lane":"ugc_video","reach_for":"Create beat-marked timed scripts in a natural spoken voice.","body_status":"manifest-contract"},
+    "ugc-brief": {"lane":"ugc_video","reach_for":"Create a shoot-ready brief with hooks, shot list and caption.","body_status":"manifest-contract"},
+    "video-shortform": {"lane":"ugc_video","reach_for":"Guide short-form video assembly and editing.","body_status":"manifest-contract"},
+    "youtube-clipper": {"lane":"ugc_video","reach_for":"Extract reusable clips from long-form video.","body_status":"manifest-contract"},
+
+    "threejs": {"lane":"three_d","reach_for":"Build interactive 3D experiences in the browser.","body_status":"manifest-contract"},
+    "speech": {"lane":"voice","reach_for":"Generate text-to-speech through the selected speech provider.","body_status":"manifest-contract"},
+
+    "client-presence-audit": {"lane":"agency","reach_for":"Produce a scored public-presence gap report with a phased strategy.","body_status":"manifest-contract"},
+    "landing-copy": {"lane":"agency","reach_for":"Write a landing page for one audience, one promise and objections in sequence.","body_status":"manifest-contract"},
+    "pitch-deck": {"lane":"agency","reach_for":"Build a sourced narrative deck around a clear commercial story.","body_status":"manifest-contract"},
+    "lead-scouting": {"lane":"agency","reach_for":"Find qualified leads from public sources.","body_status":"manifest-contract"},
+    "support-replies": {"lane":"agency","reach_for":"Answer in company voice and convert repeated answers into documentation.","body_status":"manifest-contract"},
+
+    "commitment-tracking": {"lane":"ops","reach_for":"Track what the owner committed to and surface follow-through.","body_status":"manifest-contract"},
+    "inbox-triage": {"lane":"ops","reach_for":"Turn inbox work into one board with held drafts and no automatic sends.","body_status":"manifest-contract"},
+    "digest-composer": {"lane":"ops","reach_for":"Create recurring concise digests with citations for every factual claim.","body_status":"manifest-contract"},
+    "feed-watch": {"lane":"ops","reach_for":"Watch a source and alert only when a defined bar is crossed.","body_status":"manifest-contract"},
+    "relationship-log": {"lane":"ops","reach_for":"Keep durable records of people, context and promises.","body_status":"manifest-contract"},
+    "work-splitting": {"lane":"ops","reach_for":"Split large jobs into bounded parallel agent pieces.","body_status":"manifest-contract"},
+    "web-research": {"lane":"ops","reach_for":"Produce cross-checked cited research briefs.","body_status":"manifest-contract"},
+    "opportunity-scan": {"lane":"ops","reach_for":"Find monetizable openings matched to the owner's capabilities.","body_status":"manifest-contract"},
+    "icm-pricing": {"lane":"ops","reach_for":"Require an evidence bar before pricing or selling an offer.","body_status":"manifest-contract"}
+  },
+  "pare_spine": {
+    "atomic": true,
+    "members": ["pare-brand-discovery","pare-collins-level","pare-completion-gates","pare-design-delivery","pare-design-guardian","pare-design-proof","pare-gauntlet","pare-humanize","pare-seo","pare-subtraction","pare-svg-engineering","pare-doctrine"],
+    "note": "Keep the PARÉ system coherent; do not fragment or collapse it into unrelated generic skills."
+  },
+  "family_collapse": {
+    "decks":"html-ppt",
+    "review":"adversarial-review-pass",
+    "frontend":"frontend-design",
+    "humanizer":"pare-humanize",
+    "speech":"speech",
+    "gsap":"gsap",
+    "figma":"figma",
+    "fal":"fal",
+    "venice":"venice",
+    "orbit":"orbit",
+    "wireframe":"wireframe",
+    "web_prototype":"web-prototype",
+    "imagegen":"imagegen",
+    "design_taste":"design-taste",
+    "dashboard":"dashboard"
+  }
+}
