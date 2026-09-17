@@ -1,4 +1,5 @@
 import { hermesChat, hermesConfigured } from '../lib/hermes-client.js';
+import { allowedModels } from '../lib/openrouter-lanes.js';
 
 // BARS chat: Hermes is the execution engine. We never fabricate a successful
 // model/tool receipt when the runtime is detached.
@@ -10,7 +11,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'MethodNotAllowed', message: 'POST required' });
   }
 
-  const { message, history, conversationId } = req.body || {};
+  const { message, history, conversationId, model } = req.body || {};
   const prompt = String(message || '').trim();
   if (!prompt) {
     return res.status(400).json({ error: 'BadRequest', message: 'message is required.' });
@@ -37,12 +38,23 @@ export default async function handler(req, res) {
     });
   }
 
+  const pinned = model ? String(model) : '';
+  if (pinned && !allowedModels().has(pinned)) {
+    return res.status(422).json({
+      ok: false,
+      error: 'UnknownModel',
+      message: 'Requested model is not one of the configured OpenRouter lane models.',
+      allowed: [...allowedModels()],
+    });
+  }
+
   const started = Date.now();
   try {
     const result = await hermesChat({
       message: prompt,
       history: Array.isArray(history) ? history : [],
       conversation: conversationId || 'bars-web',
+      model: pinned || undefined,
     });
 
     return res.status(200).json({
