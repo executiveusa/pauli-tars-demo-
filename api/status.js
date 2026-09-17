@@ -37,6 +37,10 @@ export default async function handler(req, res) {
   }
 
   const hermesAttached = Boolean(hermes.configured && hermes.reachable);
+  const gitSha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.BARS_GIT_SHA || null;
+  const gitRef = process.env.VERCEL_GIT_COMMIT_REF || null;
+  const environment = process.env.VERCEL_ENV || process.env.NODE_ENV || null;
+
   return res.status(200).json({
     ok: true,
     service: 'BARS',
@@ -59,6 +63,12 @@ export default async function handler(req, res) {
         last_heartbeat: n.last_heartbeat,
       })),
     },
+    release: {
+      gitSha,
+      gitRef,
+      environment,
+      exactRevisionObservable: Boolean(gitSha),
+    },
     mode: hermesAttached
       ? (hostExecutionAttached ? 'hermes+sovereign-host' : 'hermes-attached')
       : (hostExecutionAttached ? 'sovereign-host-only' : remoteConfigured ? 'control-plane-ready' : 'detached'),
@@ -67,7 +77,7 @@ export default async function handler(req, res) {
       : hostExecutionAttached
         ? 'host-execution-verified'
         : 'no-agent-execution-verified',
-    proofRule: 'A configured integration is not called operational until a live authenticated probe succeeds.',
+    proofRule: 'A configured integration is not called operational until a live authenticated probe succeeds. Production verified additionally requires the exact released revision to be observable at runtime.',
     timestamp: new Date().toISOString(),
   });
 }
