@@ -503,6 +503,13 @@
       <div id="setModels" class="set-grid"></div></div>
     <div class="set-sect"><div class="set-lbl">WHAT BARS IS ALLOWED TO DO</div>
       <div id="setTrust" class="set-grid"></div></div>
+    <div class="set-sect"><div class="set-lbl">CONNECTIONS - YOUR APPS, VIA COMPOSIO</div>
+      <div class="set-hint">Read-only first: BARS can see what's connected. Connecting an app opens Composio's own sign-in - you approve access there, and nothing connects until you finish it.</div>
+      <div id="connHint" class="set-hint">checking...</div>
+      <div id="setConnections" class="set-grid"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input id="connApp" placeholder="app to connect (e.g. gmail)" style="flex:1;background:#111;border:1px solid #333;color:#eee;padding:8px;font:inherit">
+        <button id="connBtn" class="set-opt">CONNECT</button></div></div>
     <div class="set-sect"><div class="set-lbl">TAKEOVER SPEED — HOW FAST HE DRIVES YOUR SCREEN</div>
       <div class="set-hint">Each click is a full round-trip; the model sets the pace. Faster = snappier but slightly less precise.</div>
       <div id="setSpeed" class="set-grid"></div></div>
@@ -1107,10 +1114,14 @@ const VOICES=[
  {name:"ADAM",id:"pNInz6obpgDQGcFmaJgB",blurb:"firm, grounded"},
  {name:"CHRIS",id:"iP95p4xoKVk53GoZ742B",blurb:"warm, down-to-earth"},
  {name:"ROGER",id:"CwhRBWXzGAHq8TQ4Fs17",blurb:"laid-back (original)"},
- {name:"DANIEL",id:"onwK4e9ZLuTAKqWW03F9",blurb:"steady broadcaster (new)"}];
+ {name:"DANIEL",id:"onwK4e9ZLuTAKqWW03F9",blurb:"steady broadcaster (new)"},
+ {name:"LIAM",id:"TX3LPaxmHKxFdv7VOQHJ",blurb:"young creator energy (new)"},
+ {name:"CHARLIE",id:"IKne3meq5aSn9XLyUdCD",blurb:"young aussie spark (new)"},
+ {name:"JESSICA",id:"cgSgspJ2msm6clMCkdW9",blurb:"young, playful, bright (new)"}];
 const VOICE_PROFILES={TRICKSTER:{pitch:.6,rate:.96},ULTRON:{pitch:.4,rate:.88},
  DEEPPOOL:{pitch:.35,rate:.85},ADAM:{pitch:.7,rate:.92},CHRIS:{pitch:.85,rate:.97},
- ROGER:{pitch:.75,rate:.9},DANIEL:{pitch:.8,rate:.94}};
+ ROGER:{pitch:.75,rate:.9},DANIEL:{pitch:.8,rate:.94},
+ LIAM:{pitch:.9,rate:1.0},CHARLIE:{pitch:.95,rate:1.02},JESSICA:{pitch:1.05,rate:1.0}};
 const VOICE_TEST="Humor: ninety percent. Confirmed. Self-destruct sequence in T minus ten... nine... eight... I'm kidding. Mostly.";
 const TRUST_Q={"draft-safe":"Draft-safe. I look, I don't touch.",
   "confirm-to-act":"Confirm-to-act. I pull triggers — after you say 'do it'."};
@@ -1192,6 +1203,20 @@ function paintModel(id){curModel=id;
 }
 function opt(t,s){const b=document.createElement("button");b.className="set-opt";
   b.innerHTML=`<span class="so-t">${esc(t)}</span><span class="so-s">${esc(s)}</span>`;return b;}
+async function browseUrl(url){
+  tx("BARS","Reading that page now - read-only, nothing clicked...");
+  try{
+    const r=await fetch("/api/browse",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({url})});
+    const j=await r.json();
+    if(j.ok){
+      tx("BARS","Read it: "+(j.title||j.url)+(j.truncated?" (long page - kept the first chunk)":"")+". Ask me anything about it.");
+      history.push({role:"user",content:"browse "+url},
+        {role:"assistant",content:"[read-only page read: "+(j.title||"")+"] "+(j.text||"")});
+      if(history.length>16)history.splice(0,history.length-16);
+    }else{tx("BARS","Couldn't read it: "+(j.message||j.error||"unknown"));}
+  }catch(e){tx("BARS","Browse link down: "+e.message);}
+}
 function pinnedModel(){try{return localStorage.getItem("bars_model")||"";}catch(e){return "";}}
 async function pickVoice(v){
   paintVoice(v.name);
@@ -1233,7 +1258,34 @@ function buildSettings(models){
      .forEach(([v,t,s])=>{const b=opt(t,s);b.dataset.v=v;b.onclick=()=>pickSpeed(v);sg.appendChild(b);});
     paintSpeed();}
   paintVoice(curVoice);paintModel(curModel);paintTrust();
+  loadConnections();
 }
+async function loadConnections(){
+  const hint=$("#connHint"),grid=$("#setConnections");if(!hint)return;
+  try{
+    const r=await fetch("/api/composio");const j=await r.json();
+    if(!j.ok){hint.textContent=j.message||("connections unavailable: "+(j.error||"error"));return;}
+    hint.textContent=j.count?("connected: "+j.count):"none connected yet - connect your first app below.";
+    grid.innerHTML="";
+    (j.connections||[]).forEach(c=>{const b=opt((c.toolkit||"?").toUpperCase(),c.status||"");
+      b.disabled=true;grid.appendChild(b);});
+  }catch(e){hint.textContent="connections check failed: "+e.message;}
+}
+async function connectApp(){
+  const inp=$("#connApp"),slug=(inp.value||"").trim().toLowerCase();
+  if(!slug)return;
+  tx("BARS","Getting a secure sign-in link for "+slug+"...");
+  try{
+    const r=await fetch("/api/composio",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({toolkit:slug})});
+    const j=await r.json();
+    if(j.ok&&j.link){tx("BARS","Open this to sign "+slug+" in (Composio's page, yours to approve): "+j.link);
+      window.open(j.link,"_blank");inp.value="";}
+    else tx("BARS","No link: "+(j.message||j.error||"unknown"));
+  }catch(e){tx("BARS","Connect failed: "+e.message);}
+}
+document.addEventListener("click",e=>{if(e.target&&e.target.id==="connBtn")connectApp();
+  if(e.target&&e.target.id==="connApp")return;});
 let takeoverSpeed="balanced";
 function paintSpeed(){document.querySelectorAll("#setSpeed .set-opt").forEach(b=>
   b.classList.toggle("on",b.dataset.v===takeoverSpeed));}
@@ -1498,6 +1550,8 @@ async function ask(){
     inp.value="";tx("YOU",text);stopScreenShare(true);return;}
   if(seeStream){                 // screen link open → every question sees a FRESH frame
     inp.value="";tx("YOU",text);askVision(text);return;}
+  const bm=text.match(/^browse\s+(\S+)/i);
+  if(bm){inp.value="";tx("YOU",text);browseUrl(bm[1]);return;}
   inp.value="";tx("YOU",text);
   $("#askBtn").disabled=true;speakingN++;setBody();
   try{
