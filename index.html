@@ -397,10 +397,11 @@
   .fleetRow i.fdot.on{background:var(--ok);box-shadow:0 0 6px rgba(127,211,154,.6)}
   .fleetEmpty{color:var(--mut);font-size:12px;padding:6px 2px}
   @media (max-width:960px){
+    html,body{height:auto;min-height:100%;overflow-x:hidden;overflow-y:auto}
     #ptt{display:flex;left:14px;transform:none}
     #talkBtn{display:inline-flex}
     body{padding-bottom:96px}
-    #main{flex-direction:column}
+    #main{flex-direction:column;flex:none}
     #stage{flex:none;padding:12px 0}
     #rig3d{height:300px}
     #console{max-width:none;border-left:none;border-top:1px solid var(--line)}
@@ -495,10 +496,10 @@
   <div id="setPanel">
     <div class="set-head"><span>⚙ SETTINGS</span><button id="setClose">CLOSE</button></div>
     <div class="set-sect"><div class="set-lbl">BARS'S VOICE</div>
-      <div class="set-hint">Pick a voice — it speaks a test line when you choose it.</div>
+      <div class="set-hint">Pick a voice — it speaks a test line when you choose it. This hosted build speaks through your browser's speech engine; the full ElevenLabs wardrobe speaks in the desktop app.</div>
       <div id="setVoices" class="set-grid"></div></div>
     <div class="set-sect"><div class="set-lbl">BRAIN — THE MODEL BARS THINKS WITH</div>
-      <div class="set-hint">Smarter = better answers, slower. Faster = quicker, cheaper.</div>
+      <div class="set-hint">Routed through OpenRouter — BARS picks a lane per job: flash for quick answers, worker for code and tools, reasoner for planning, judge for release review. Pin a model here to override the router in this browser.</div>
       <div id="setModels" class="set-grid"></div></div>
     <div class="set-sect"><div class="set-lbl">WHAT BARS IS ALLOWED TO DO</div>
       <div id="setTrust" class="set-grid"></div></div>
@@ -1051,7 +1052,8 @@ function sayBrowser(text){return new Promise(res=>{
     const vs=speechSynthesis.getVoices();
     u.voice=vs.find(v=>/en.US/i.test(v.lang)&&/male|david|alex|fred/i.test(v.name))||
             vs.find(v=>/en.US/i.test(v.lang))||null;
-    u.rate=.92;u.pitch=.72;u.onend=u.onerror=fin;speechSynthesis.speak(u);}
+    const vp=VOICE_PROFILES[curVoice]||{rate:.92,pitch:.72};
+    u.rate=vp.rate;u.pitch=vp.pitch;u.onend=u.onerror=fin;speechSynthesis.speak(u);}
   catch(e){fin();}});}
 
 /* ---------------- canned personality ---------------- */
@@ -1104,7 +1106,11 @@ const VOICES=[
  {name:"DEEPPOOL",id:"j0sILsZuQ2hWpw6bsZn2",blurb:"deep, dry"},
  {name:"ADAM",id:"pNInz6obpgDQGcFmaJgB",blurb:"firm, grounded"},
  {name:"CHRIS",id:"iP95p4xoKVk53GoZ742B",blurb:"warm, down-to-earth"},
- {name:"ROGER",id:"CwhRBWXzGAHq8TQ4Fs17",blurb:"laid-back (original)"}];
+ {name:"ROGER",id:"CwhRBWXzGAHq8TQ4Fs17",blurb:"laid-back (original)"},
+ {name:"DANIEL",id:"onwK4e9ZLuTAKqWW03F9",blurb:"steady broadcaster (new)"}];
+const VOICE_PROFILES={TRICKSTER:{pitch:.6,rate:.96},ULTRON:{pitch:.4,rate:.88},
+ DEEPPOOL:{pitch:.35,rate:.85},ADAM:{pitch:.7,rate:.92},CHRIS:{pitch:.85,rate:.97},
+ ROGER:{pitch:.75,rate:.9},DANIEL:{pitch:.8,rate:.94}};
 const VOICE_TEST="Humor: ninety percent. Confirmed. Self-destruct sequence in T minus ten... nine... eight... I'm kidding. Mostly.";
 const TRUST_Q={"draft-safe":"Draft-safe. I look, I don't touch.",
   "confirm-to-act":"Confirm-to-act. I pull triggers — after you say 'do it'."};
@@ -1186,17 +1192,23 @@ function paintModel(id){curModel=id;
 }
 function opt(t,s){const b=document.createElement("button");b.className="set-opt";
   b.innerHTML=`<span class="so-t">${esc(t)}</span><span class="so-s">${esc(s)}</span>`;return b;}
+function pinnedModel(){try{return localStorage.getItem("bars_model")||"";}catch(e){return "";}}
 async function pickVoice(v){
-  const r=await fetch("/voice",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({voice_id:v.id,name:v.name})});
-  if((await r.json()).ok){paintVoice(v.name);
-    if(!audioArmed)$("#audioBtn").click();stopSpeech();say(VOICE_TEST);}
-}
+  paintVoice(v.name);
+  try{localStorage.setItem("bars_voice",v.name);}catch(e){}
+  try{await fetch("/api/voice",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({voice_id:v.id,name:v.name})});}catch(e){}
+  if(!audioArmed)$("#audioBtn").click();stopSpeech();say(VOICE_TEST);}
 async function pickModel(m){
-  const r=await fetch("/model",{method:"POST",headers:{"Content-Type":"application/json"},
+  paintModel(m.id);
+  try{localStorage.setItem("bars_model",m.id);}catch(e){}
+  try{const r=await fetch("/api/model",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:m.id})});
-  if((await r.json()).ok){paintModel(m.id);
-    barsLine("Brain: "+m.label+". Confirmed.",true);say("Now thinking with "+m.label+".");}
+    const j=await r.json();
+    if(!j.ok){paintModel("");try{localStorage.removeItem("bars_model");}catch(e){}
+      tx("BARS","Model pin rejected: "+(j.message||j.error||"unknown"));}
+    else{barsLine("Brain: "+m.label+". Confirmed.",true);}
+  }catch(e){}
 }
 async function pickTrust(v){
   trust=v;await fetch("/dials",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -1489,8 +1501,8 @@ async function ask(){
   inp.value="";tx("YOU",text);
   $("#askBtn").disabled=true;speakingN++;setBody();
   try{
-    const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text,history})});
+    const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:text,history,model:pinnedModel()||undefined})});
     const j=await r.json();speakingN--;
     if(j.reply!==undefined){
       history.push({role:"user",content:text},{role:"assistant",content:j.reply||"(action)"});
@@ -1514,7 +1526,7 @@ async function ask(){
       if(j.deployed)poll();
       openChannel();
     }
-    else{tx("BARS","Brain link error: "+(j.error||"unknown"));}
+    else{tx("BARS","Brain link error: "+(j.message||j.error||"unknown"));}
   }catch(e){speakingN--;tx("BARS","Brain link down: "+e.message);}
   $("#askBtn").disabled=false;setBody();
 }
@@ -1629,17 +1641,15 @@ async function deploy(){
   if(!brief){emptyNudge();return;}
   inp.value="";tx("YOU","⟩ MISSION: "+brief);
   const shot=seeStream?await grabFrame():null;   // sharing → the robot sees what you see
-  const r=await fetch("/brief",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({brief,image:shot})});
-  const j=await r.json();
-  if(j.id){announced.add(j.id);
-    if(j.squad){(j.children||[]).forEach(c=>announced.add(c));
-      tx("BARS","⟩ SQUAD DEPLOYED — "+(j.plan||[]).length+" jobs:");
-      (j.plan||[]).forEach((p,i)=>tx("BARS","  "+(["CASE","KIPP","PLEX","N1X"][i]||"·")+" → "+p));}
-    const ack=DEPLOY_ACK[Math.floor(Math.random()*DEPLOY_ACK.length)]
-      .replace("{A}",j.squad?"The squad":(j.agent||"CASE"));
-    tx("BARS",ack);barsLine(ack,true);say(ack);openChannel();barsLaunch();poll();}
-  else tx("BARS","Deploy failed: "+(j.error||"unknown"));
+  const r=await fetch("/api/mission",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mission:brief})});
+  const j=await r.json().catch(()=>({}));
+  if(j.ok){
+    const ack=DEPLOY_ACK[Math.floor(Math.random()*DEPLOY_ACK.length)].replace("{A}","CASE");
+    tx("BARS",ack);barsLine(ack,true);say(ack);openChannel();barsLaunch();
+    tx("BARS","⟩ MISSION QUEUED — "+(j.route?("lane "+j.route.lane+" · "+j.route.model):"")+(j.runId?(" · run "+j.runId):""));
+  }
+  else tx("BARS","Deploy failed: "+(j.message||j.error||"unknown"));
 }
 function fmtDur(m){const end=m.t_end?m.t_end*1000:Date.now();
   const s=Math.max(0,Math.floor((end-m.t_start*1000)/1000));
@@ -2544,6 +2554,8 @@ function stopRealtime(){
   if(d){$("#humor").value=d.humor;$("#honesty").value=d.honesty;if(d.trust)trust=d.trust;}
   const mj=await fetch("/api/models").then(r=>r.json()).catch(()=>({models:[],current:""}));
   curModel=mj.current||"";
+  try{const pm=localStorage.getItem("bars_model");if(pm)curModel=pm;
+    const pv=localStorage.getItem("bars_voice");if(pv)curVoice=pv;}catch(e){}
   buildSettings(mj.models);
   paintDial("humor");paintDial("honesty");
   barsLine(`BARS ONLINE · FLAVOR ${$("#humor").value}% · AUTHENTICITY ${$("#honesty").value}%`,true);
