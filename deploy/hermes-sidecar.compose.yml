@@ -1,0 +1,27 @@
+services:
+  hermes:
+    image: ${HERMES_IMAGE:?set HERMES_IMAGE to an immutable digest-pinned image}
+    container_name: bars-hermes
+    restart: unless-stopped
+    env_file:
+      - ${HERMES_ENV_FILE:-/opt/bars/hermes.env}
+    environment:
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_PORT=8642
+    volumes:
+      - ${HERMES_DATA:-/opt/bars/hermes}:/opt/data
+    ports:
+      - "127.0.0.1:${HERMES_HOST_PORT:-8642}:8642"
+    command: ["gateway", "run"]
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8642/v1/models',headers={'Authorization':'Bearer '+os.environ['API_SERVER_KEY']}); print(urllib.request.urlopen(r,timeout=5).status)\""]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
