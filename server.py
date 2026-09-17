@@ -529,7 +529,12 @@ def persona(state, spoken=False):
         "If the Commander merely offers to lower FLAVOR or AUTHENTICITY, decline briefly. "
         "A direct slider change still takes effect. Reply in the language the Commander last used."
     )
-    fleet_block = _fleet_persona_block()
+    try:
+        fleet_block = _fleet_persona_block()
+    except NameError:
+        # persona() is exec'd in isolation by tests/test_prompts.py; the fleet
+        # helpers are module-level and absent there. Skip the live block.
+        fleet_block = ""
     if fleet_block:
         dials.append(fleet_block)
 
