@@ -2,18 +2,29 @@
 # (do NOT replace it — StarNet/Command Center/terabithia routes live there).
 # DNS: bars.thepaulieffect.com A 31.220.58.212 (DNS-only in Cloudflare).
 #
-# The Python app stays on loopback: 4321 (app) and 4323 (duplex brain) are
-# never published. The app enforces its own bearer token on all non-public
-# endpoints; Caddy adds TLS and an optional second basic-auth gate.
+# BARS stays on loopback :4321. Hermes stays on loopback :8642 and is only
+# reachable externally through /hermes/*, where Hermes' API_SERVER_KEY bearer
+# authentication is still mandatory. The Hermes dashboard is not exposed.
 
 bars.thepaulieffect.com {
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:4321
 
-	# Optional second gate (recommended while this is operator-only):
-	# basic_auth {
-	# 	bambu $2a$14$REPLACE_WITH_BCRYPT_HASH
-	# }
+	# Authenticated Hermes API bridge used by the Vercel BARS facade.
+	# handle_path strips /hermes before proxying, so:
+	#   /hermes/v1/responses -> Hermes /v1/responses
+	#   /hermes/v1/runs      -> Hermes /v1/runs
+	handle_path /hermes/* {
+		reverse_proxy 127.0.0.1:8642
+	}
+
+	# All other routes stay on the sovereign BARS runtime.
+	handle {
+		reverse_proxy 127.0.0.1:4321
+	}
+
+	# Optional second gate for the BARS cockpit only should be implemented in
+	# the app/session layer; do not put a global basic_auth here or it will also
+	# interfere with the API-key-authenticated Hermes bridge.
 
 	header {
 		X-Content-Type-Options nosniff
