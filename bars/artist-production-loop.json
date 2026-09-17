@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "bars-artist-production-loop",
+  "governor": ".agents/skills/loop-engineering/SKILL.md",
+  "engine": "Hermes Agent",
+  "purpose": "Take an artist brief plus owned/authorized assets through a governed, evidence-backed product/media production loop.",
+  "inputs": {
+    "required": ["goal", "artist_or_project", "deliverable"],
+    "optional": ["google_drive_asset_refs", "music_refs", "brand_refs", "deadline", "budget_cap", "distribution_targets"]
+  },
+  "graph": [
+    {"id":"intake","stage":"LOCK","writes":["brief","bar","constraints"],"requires":[]},
+    {"id":"asset_inventory","stage":"EVIDENCE","writes":["asset_manifest","provenance"],"requires":["intake"]},
+    {"id":"creative_direction","stage":"SPEC","writes":["treatment","storyboard","shot_plan"],"requires":["asset_inventory"]},
+    {"id":"music_lane","stage":"BUILD","writes":["music_candidates","music_receipts"],"requires":["creative_direction"],"adapter":"opensuno-or-approved-provider"},
+    {"id":"visual_lane","stage":"BUILD","writes":["visual_candidates","visual_receipts"],"requires":["creative_direction"],"adapter":"visual-provider"},
+    {"id":"real_footage_lane","stage":"BUILD","writes":["footage_selects","edit_manifest"],"requires":["asset_inventory"],"adapter":"google-drive-or-authorized-storage"},
+    {"id":"assembly","stage":"BUILD","writes":["master_candidate","project_manifest"],"requires":["music_lane","visual_lane","real_footage_lane"]},
+    {"id":"critic","stage":"VERIFY","writes":["verification_report"],"requires":["assembly"],"builder_may_not_approve":true},
+    {"id":"gauntlet","stage":"GAUNTLET","writes":["scorecard","rework_nodes"],"requires":["critic"]},
+    {"id":"release","stage":"RELEASE","writes":["release_receipt","rollback_pointer"],"requires":["gauntlet"],"human_gate":true},
+    {"id":"learn","stage":"LEARN","writes":["lessons","skill_updates"],"requires":["release"]}
+  ],
+  "approval_boundaries": {
+    "always_require_human": ["publish", "send", "post", "spend", "purchase", "delete", "account_mutation", "credential_change", "production_release"],
+    "draft_safe_without_human": ["research", "read_authorized_assets", "generate_drafts", "render_preview", "create_local_manifest", "run_verification"]
+  },
+  "proof_contract": {
+    "provider_call": ["provider", "request_id_or_receipt", "timestamp", "input_reference", "output_reference"],
+    "release": ["exact_revision", "artifact_hash_or_reference", "runtime_or_delivery_probe", "rollback_pointer", "independent_verifier"]
+  },
+  "terminal_states": ["NOT READY", "READY FOR PREVIEW", "PREVIEW VERIFIED", "PRODUCTION VERIFIED"]
+}
