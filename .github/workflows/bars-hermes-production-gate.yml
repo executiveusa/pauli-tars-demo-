@@ -69,8 +69,11 @@ jobs:
         run: |
           if [ -z "$BARS_BASE_URL" ]; then
             echo "BARS_PRODUCTION_URL secret is not configured; live runtime proof cannot run." >&2
-            echo "This is a release blocker for PRODUCTION VERIFIED, not a static-contract failure." >&2
-            exit 0
+            if [ "${{ github.event_name }}" = "push" ]; then
+              echo "A main-branch release cannot be marked green without exact-revision runtime proof." >&2
+              exit 1
+            fi
+            echo "PR contract checks may continue, but this candidate is not PRODUCTION VERIFIED." >&2
           fi
       - name: Four-phase runtime proof
         if: ${{ env.BARS_BASE_URL != '' }}
