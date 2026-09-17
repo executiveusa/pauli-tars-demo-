@@ -1,0 +1,77 @@
+name: BARS Hermes production gate
+
+on:
+  pull_request:
+    paths:
+      - "api/**"
+      - "lib/**"
+      - "bars/**"
+      - "deploy/**"
+      - "scripts/**"
+      - ".agents/skills/loop-engineering/**"
+      - ".github/workflows/bars-hermes-production-gate.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: JavaScript syntax
+        run: |
+          node --check api/status.js
+          node --check api/capabilities.js
+          node --check api/chat.js
+          node --check api/mission.js
+          node --check lib/hermes-client.js
+          node --check scripts/verify-bars-hermes-runtime.mjs
+          node --check scripts/verify-bars-production.mjs
+      - name: Shell syntax
+        run: |
+          bash -n scripts/build-bars-hermes-runtime.sh
+          bash -n deploy/deploy-hermes-sidecar.sh
+          bash -n deploy/rollback-hermes-sidecar.sh
+      - name: Machine-readable contracts
+        run: |
+          python -m json.tool bars/hermes-overlay.json >/dev/null
+          python -m json.tool bars/artist-production-loop.json >/dev/null
+      - name: Loop governor present
+        run: |
+          grep -q "INTENT -> BAR -> LOCK" .agents/skills/loop-engineering/SKILL.md
+          grep -q "PRODUCTION VERIFIED" .agents/skills/loop-engineering/SKILL.md
+      - name: Immutable Hermes release contract
+        run: |
+          grep -q 'HERMES_IMAGE.*@sha256' deploy/deploy-hermes-sidecar.sh
+          grep -q 'API_SERVER_KEY' deploy/hermes-sidecar.compose.yml
+          grep -q '127.0.0.1' deploy/hermes-sidecar.compose.yml
+      - name: Existing BARS gauntlet
+        run: |
+          python scripts/check_bars_identity.py
+          bash tests/run_all.sh
+
+  live-production:
+    needs: contract
+    runs-on: ubuntu-latest
+    env:
+      BARS_BASE_URL: ${{ secrets.BARS_PRODUCTION_URL }}
+      BARS_EXPECTED_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Runtime gate availability
+        run: |
+          if [ -z "$BARS_BASE_URL" ]; then
+            echo "BARS_PRODUCTION_URL secret is not configured; live runtime proof cannot run." >&2
+            echo "This is a release blocker for PRODUCTION VERIFIED, not a static-contract failure." >&2
+            exit 0
+          fi
+      - name: Four-phase runtime proof
+        if: ${{ env.BARS_BASE_URL != '' }}
+        run: node scripts/verify-bars-production.mjs
