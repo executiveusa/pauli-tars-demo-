@@ -92,12 +92,19 @@ for rel in "${optional[@]}"; do copy_skill "$rel" optional; done
   echo "missing BARS live skill registry" >&2
   exit 69
 }
-mkdir -p "$OUTPUT/skills/bars-skill-router" "$OUTPUT/bars/skills"
+[[ -f "$REPO_ROOT/.agents/skills/composio/SKILL.md" ]] || {
+  echo "missing official Composio skill" >&2
+  exit 70
+}
+mkdir -p "$OUTPUT/skills/bars-skill-router" "$OUTPUT/skills/composio" "$OUTPUT/bars/skills"
 cp -a "$REPO_ROOT/.agents/skills/bars-skill-router/." "$OUTPUT/skills/bars-skill-router/"
+cp -a "$REPO_ROOT/.agents/skills/composio/." "$OUTPUT/skills/composio/"
 cp -a "$REPO_ROOT/bars/skills/live-registry.json" "$OUTPUT/bars/skills/live-registry.json"
 python -m json.tool "$OUTPUT/bars/skills/live-registry.json" >/dev/null
+python -m json.tool "$OUTPUT/skills/composio/SOURCE.json" >/dev/null
 
 echo "installed: skills/bars-skill-router"
+echo "installed: skills/composio"
 echo "installed: bars/skills/live-registry.json"
 
 mkdir -p "$OUTPUT/bars"
@@ -156,6 +163,7 @@ required_skills=${#required[@]}
 optional_skills=${#optional[@]}
 bars_router_skill=installed
 bars_live_registry=installed
+composio_skill=installed
 status=BUILT_NOT_VERIFIED
 next=run upstream tests, start Hermes API server, then execute BARS integration smoke tests
 EOF
