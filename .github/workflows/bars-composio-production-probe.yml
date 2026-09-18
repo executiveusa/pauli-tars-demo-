@@ -1,0 +1,31 @@
+name: BARS Composio production config probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/bars-composio-production-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      HAS_COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY != '' }}
+      HAS_VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
+      HAS_BARS_OPERATOR_TOKEN: ${{ secrets.BARS_OPERATOR_TOKEN != '' }}
+    steps:
+      - name: Report secret presence only
+        run: |
+          echo "COMPOSIO_API_KEY_PRESENT=$HAS_COMPOSIO_API_KEY"
+          echo "VERCEL_TOKEN_PRESENT=$HAS_VERCEL_TOKEN"
+          echo "BARS_OPERATOR_TOKEN_PRESENT=$HAS_BARS_OPERATOR_TOKEN"
+          if [ "$HAS_COMPOSIO_API_KEY" != "true" ]; then
+            echo "RESULT=BLOCKED_MISSING_COMPOSIO_API_KEY"
+          elif [ "$HAS_VERCEL_TOKEN" != "true" ]; then
+            echo "RESULT=COMPOSIO_KEY_PRESENT_NO_CI_VERCEL_WRITE_PATH"
+          else
+            echo "RESULT=READY_FOR_SAFE_VERCEL_ENV_SYNC"
+          fi
