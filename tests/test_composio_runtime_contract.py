@@ -17,6 +17,8 @@ assert meta["source"] == "ComposioHQ/composio"
 assert meta["resolved_commit"] == "b27c24d00d952570f31c44f2f319008761f28c35"
 
 assert "process.env.BARS_COMPOSIO_TOKEN || process.env.COMPOSIO_API_KEY" in api
+assert "cfg.id || (cfg.auth_config && cfg.auth_config.id)" in api
+assert "https://backend.composio.dev/api/v3.1" in api
 assert "BARS_COMPOSIO_TOKEN" in caps
 assert 'cp -a "$REPO_ROOT/.agents/skills/composio/." "$OUTPUT/skills/composio/"' in build
 assert overlay["local_composio_skill"] == ".agents/skills/composio"
