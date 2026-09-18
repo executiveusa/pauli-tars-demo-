@@ -17,12 +17,17 @@ async function capi(path, key, opts = {}) {
 export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
-  const key = process.env.COMPOSIO_API_KEY;
+
+  // Primary production path: Infisical/Coolify injects BARS_COMPOSIO_TOKEN at
+  // runtime. COMPOSIO_API_KEY remains a compatibility fallback for older
+  // deployments. Never return, log, or expose either value.
+  const key = process.env.BARS_COMPOSIO_TOKEN || process.env.COMPOSIO_API_KEY;
   if (!key) {
     return res.status(503).json({
-      ok: false, error: 'ComposioNotConfigured',
-      message: 'COMPOSIO_API_KEY is not set on this deployment yet.',
-      requiredEnvironment: ['COMPOSIO_API_KEY'],
+      ok: false,
+      error: 'ComposioNotConfigured',
+      message: 'Composio runtime credential is not available to this deployment yet.',
+      requiredEnvironment: ['BARS_COMPOSIO_TOKEN', 'COMPOSIO_API_KEY'],
     });
   }
   if (req.method === 'GET') {
