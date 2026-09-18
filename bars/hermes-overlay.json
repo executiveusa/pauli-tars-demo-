@@ -55,7 +55,10 @@
       "id": "composio",
       "kind": "mcp",
       "url": "https://connect.composio.dev/mcp",
-      "secret_location": "runtime only"
+      "secret_location": "runtime only",
+      "credential_env": "BARS_COMPOSIO_TOKEN",
+      "legacy_credential_env": "COMPOSIO_API_KEY",
+      "skill_source": "ComposioHQ/composio@b27c24d00d952570f31c44f2f319008761f28c35"
     },
     {
       "id": "opensuno",
@@ -68,5 +71,6 @@
       "kind": "provider-adapter",
       "note": "Use this boundary for Phyla or any later image/video provider after its current API is verified."
     }
-  ]
+  ],
+  "local_composio_skill": ".agents/skills/composio"
 }
