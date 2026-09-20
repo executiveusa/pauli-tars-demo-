@@ -3,10 +3,11 @@
 // OAuth link - the owner completes sign-in on Composio's page. No tool/action
 // execution exists in this endpoint; write actions need a per-app owner word.
 const BASE = 'https://backend.composio.dev/api/v3';
+const LINK_BASE = 'https://backend.composio.dev/api/v3.1';
 const USER_ID = 'bars-default';
 
-async function capi(path, key, opts = {}) {
-  const r = await fetch(BASE + path, {
+async function capi(path, key, opts = {}, base = BASE) {
+  const r = await fetch(base + path, {
     ...opts,
     headers: { 'x-api-key': key, 'Content-Type': 'application/json', ...(opts.headers || {}) },
   });
@@ -17,12 +18,17 @@ async function capi(path, key, opts = {}) {
 export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
-  const key = process.env.COMPOSIO_API_KEY;
+
+  // Primary production path: Infisical/Coolify injects BARS_COMPOSIO_TOKEN at
+  // runtime. COMPOSIO_API_KEY remains a compatibility fallback for older
+  // deployments. Never return, log, or expose either value.
+  const key = process.env.BARS_COMPOSIO_TOKEN || process.env.COMPOSIO_API_KEY;
   if (!key) {
     return res.status(503).json({
-      ok: false, error: 'ComposioNotConfigured',
-      message: 'COMPOSIO_API_KEY is not set on this deployment yet.',
-      requiredEnvironment: ['COMPOSIO_API_KEY'],
+      ok: false,
+      error: 'ComposioNotConfigured',
+      message: 'Composio runtime credential is not available to this deployment yet.',
+      requiredEnvironment: ['BARS_COMPOSIO_TOKEN', 'COMPOSIO_API_KEY'],
     });
   }
   if (req.method === 'GET') {
@@ -52,12 +58,12 @@ export default async function handler(req, res) {
         return res.status(502).json({ ok: false, error: 'ComposioError', status: made.status, detail: made.body && made.body.error && made.body.error.message });
       cfg = { auth_config: made.body.auth_config };
     }
-    const authConfigId = cfg.auth_config && cfg.auth_config.id;
+    const authConfigId = cfg.id || (cfg.auth_config && cfg.auth_config.id);
     if (!authConfigId) return res.status(502).json({ ok: false, error: 'ComposioError', message: 'no auth config id returned' });
     const link = await capi('/connected_accounts/link', key, {
       method: 'POST',
       body: JSON.stringify({ auth_config_id: authConfigId, user_id: USER_ID }),
-    });
+    }, LINK_BASE);
     const url = link.body.redirect_url;
     if (!url) return res.status(502).json({ ok: false, error: 'ComposioError', status: link.status, detail: link.body && link.body.error && link.body.error.message });
     return res.status(200).json({ ok: true, toolkit, link: url, expires_at: link.body.expires_at || null,

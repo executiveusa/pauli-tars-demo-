@@ -1,0 +1,14 @@
+{
+  "source": "ComposioHQ/composio",
+  "ref": "next",
+  "resolved_commit": "b27c24d00d952570f31c44f2f319008761f28c35",
+  "skill": "skills/composio",
+  "files": {
+    "SKILL.md": "4a90c3dd43f33824b43193c5bedb64145b1109c2",
+    "references/platform.md": "78f8a2c18a4ea727c3e97dbc3a8e204dab605f4e",
+    "references/for-you.md": "4ff44b1c11f6e068a54a833a7007e2ed4cfc7ca0",
+    "references/errors.md": "d7ae8d7e7fe28696137cb65779e4a6022985630f"
+  },
+  "installed_via_equivalent": "npx skills add ComposioHQ/composio --skill composio -y",
+  "note": "Vendored exact upstream skill content because this execution surface does not run the local npx installer."
+}
