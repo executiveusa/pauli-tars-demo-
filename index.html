@@ -1278,14 +1278,14 @@ async function connectTrailMixx(){
   const st=$("#tmxStatus");st.textContent="connecting...";
   try{
     const r=await fetch("/api/repos/connect",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({repo:"trail-mixx"})});
+      body:JSON.stringify({repo:"trail-mixx-source-code"})});
     const j=await r.json();
     st.textContent=j.ok?("connected - "+j.files+" files in the workspace"):("failed: "+(j.error||"unknown"));
   }catch(e){st.textContent="connect failed: "+e.message;}
 }
 document.getElementById("tmxBtn")?.addEventListener("click",connectTrailMixx);
 (async()=>{try{const j=await fetch("/api/repos").then(r=>r.json());
-  if(j.ok&&(j.repos||[]).some(x=>x.repo==="trail-mixx")){const st=$("#tmxStatus");if(st)st.textContent="connected";}}catch(e){}})();
+  if(j.ok&&(j.repos||[]).some(x=>x.repo==="trail-mixx-source-code")){const st=$("#tmxStatus");if(st)st.textContent="connected";}}catch(e){}})();
 async function connectApp(){
   const inp=$("#connApp"),slug=(inp.value||"").trim().toLowerCase();
   if(!slug)return;
