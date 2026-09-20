@@ -164,7 +164,6 @@ def _cap_settle(key, est, actual):
         if e and e["bound"]:
             e["used"] = max(0, e["used"] - est + max(0, int(actual)))
 MISSION_TIMEOUT = 900  # seconds
-REPOS_DIR = os.path.join(DATA, "repos")   # connected repos (CONNECT TRAIL MIXX)
 SQUAD_NAMES = ["CASE", "KIPP", "PLEX", "N1X", "V0X"]
 # the model bench (conversational brain: chat / debrief / vision / duplex)
 MODELS = [
@@ -567,9 +566,6 @@ def provider_models():
         with urllib.request.urlopen(req, timeout=5) as r:
             data = json.load(r)
         ids = sorted(str(m.get("id")) for m in data.get("data", []) if m.get("id"))
-        if "openrouter" in base:
-            free = [i for i in ids if i.endswith(":free")]
-            ids = free or ids   # his lane: free models only; paid ids would just 402
         _MODELS_CACHE.update(t=time.time(), models=ids)
     except Exception:
         _MODELS_CACHE["t"] = time.time()   # back off; keep any stale list
@@ -2268,21 +2264,17 @@ def _groq_tts(text):
 
 
 
-RIME_SPEAKERS = {"bond", "orion", "luna", "celeste", "astra"}  # live-verified on arcana 2026-09-20
-
-def _rime_tts(text, speaker=None):
+def _rime_tts(text):
     """Rime lane: the decided BARS voice (speaker "bond"). Returns mp3 bytes or
     None. Environment-gated (RIME_API_KEY / RIME_VOICE / RIME_MODEL), reversible;
-    sits inside the existing /tts confirmation + budget controls. Optional
-    per-call speaker, whitelist-gated to live-verified Rime voices."""
+    sits inside the existing /tts confirmation + budget controls."""
     key = os.environ.get("RIME_API_KEY") or os.environ.get("RIME_API_TOKEN")
     if not key:
         return None
-    spk = (speaker if speaker in RIME_SPEAKERS else None) \
-        or os.environ.get("RIME_VOICE") or os.environ.get("RIME_SPEAKER") or "bond"
     body = json.dumps({"text": speakable(text)[:900],
                        "modelId": os.environ.get("RIME_MODEL", "arcana"),
-                       "speaker": spk,
+                       "speaker": (os.environ.get("RIME_VOICE")
+                                   or os.environ.get("RIME_SPEAKER") or "bond"),
                        "lang": "en"}).encode()
     req = urllib.request.Request(
         os.environ.get("RIME_TTS_URL", "https://users.rime.ai/v1/rime-tts"),
@@ -2294,7 +2286,7 @@ def _rime_tts(text, speaker=None):
         return r.read()
 
 
-def tts_bytes(text, speaker=None):
+def tts_bytes(text):
     """-> (audio_bytes, content_type) or (None, None): Rime (the decided BARS
     voice) first, then ElevenLabs, then the free Groq speech lane.
     (None, None) tells the caller to use browser speech."""
@@ -2302,7 +2294,7 @@ def tts_bytes(text, speaker=None):
         CONFIG["el_voice"] = "CwhRBWXzGAHq8TQ4Fs17"
     t = speakable(text)
     try:
-        audio = _rime_tts(t, speaker)
+        audio = _rime_tts(t)
         if audio:
             return audio, "audio/mpeg"
     except Exception:
@@ -2653,14 +2645,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "empty"}, 400); return
         sid = re.sub(r"[^A-Za-z0-9_-]", "", str(data.get("session") or ""))[:40] \
             or "ip:" + hashlib.sha256(ip.encode()).hexdigest()[:16]
-        spk = str(data.get("speaker") or "").strip().lower()
         if not _demo_voice_ok(sid):
             _receipt({"kind": "demo", "lane": "demo.tts", "ok": False,
                       "error": "voice cap reached"})
             self._json({"fallback": True, "browser_fallback": True, "capped": True}, 200)
             return
         try:
-            audio, ctype = tts_bytes(text, spk or None)
+            audio, ctype = tts_bytes(text)
         except Exception as e:
             _receipt({"kind": "demo", "lane": "demo.tts", "ok": False,
                       "error": str(e)[:160]})
@@ -2956,18 +2947,6 @@ class Handler(BaseHTTPRequestHandler):
                         "pending": bool(ACTIONS),
                         "usage": dict(LAST_USAGE),
                         "spend": spend})
-        elif path == "/api/repos":
-            repos = []
-            try:
-                for name in sorted(os.listdir(REPOS_DIR)):
-                    d = os.path.join(REPOS_DIR, name)
-                    if os.path.isdir(d):
-                        repos.append({"repo": name,
-                                      "files": sum(len(fs) for _, _, fs in os.walk(d))})
-            except FileNotFoundError:
-                pass
-            self._json({"ok": True, "repos": repos})
-            return
         elif path == "/api/fleet":
             data, err = _fleet_fetch()
             if err:
@@ -3626,39 +3605,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"id": nid, "brief": m["follow_up"],
                         "agent": MISSIONS[nid]["agent"]})
 
-        elif path == "/api/repos/connect":
-            data = self._body()
-            slug = re.sub(r"[^A-Za-z0-9_.-]", "", str(data.get("repo") or ""))[:80]
-            if not slug:
-                self._json({"error": "repo required"}, 400); return
-            dest = os.path.join(REPOS_DIR, slug)
-            tok = os.environ.get("BARS_REPO_TOKEN", "")
-            try:
-                os.makedirs(REPOS_DIR, exist_ok=True)
-                hdrs = {"Authorization": "token " + tok} if tok else {}
-                req = urllib.request.Request(
-                    f"https://codeload.github.com/executiveusa/{slug}/tar.gz/HEAD",
-                    headers=hdrs)
-                import tarfile, io as _io
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    blob = r.read()
-                tmp = dest + ".tmp"
-                shutil.rmtree(tmp, ignore_errors=True)
-                with tarfile.open(fileobj=_io.BytesIO(blob), mode="r:gz") as tf:
-                    tf.extractall(tmp)
-                inner = os.path.join(tmp, os.listdir(tmp)[0])
-                shutil.rmtree(dest, ignore_errors=True)
-                os.replace(inner, dest)
-                shutil.rmtree(tmp, ignore_errors=True)
-                n = sum(len(fs) for _, _, fs in os.walk(dest))
-                _receipt({"kind": "repo", "lane": "repos.connect", "ok": True,
-                          "repo": slug, "files": n})
-                self._json({"ok": True, "repo": slug, "files": n})
-            except Exception as e:
-                _receipt({"kind": "repo", "lane": "repos.connect", "ok": False,
-                          "repo": slug, "error": str(e)[:160]})
-                self._json({"ok": False, "repo": slug, "error": str(e)[:200]})
-            return
         elif path == "/tts":
             text = (data.get("text") or "").strip()[:4000]     # input cap
             if not text:
@@ -3667,9 +3613,8 @@ class Handler(BaseHTTPRequestHandler):
                                     len(text) // 4 + 500)
             if hold == "gated":
                 return
-            spk = str(data.get("speaker") or "").strip().lower()
             try:
-                audio, ctype = tts_bytes(text, spk or None)
+                audio, ctype = tts_bytes(text)
             except Exception as e:
                 if hold: BUDGET.fail(hold)
                 _receipt({"kind": "media_attempt", "lane": "tts.exec", "paid": True,

@@ -489,7 +489,7 @@
   <span><span class="k">🖥</span>&nbsp;SCREEN</span>
   <span><span class="k">"SQUAD:"</span>&nbsp;SPLIT ACROSS ROBOTS</span>
   <span><span class="k">"WHAT CAN YOU DO?"</span>&nbsp;TOUR</span>
-  <span style="margin-left:auto"><a href="/ops" style="color:#f5b301;text-decoration:none">OPERATOR</a>&nbsp;&nbsp;JOBS RUN IN THE BACKGROUND · NOTHING SENDS WITHOUT YOU</span>
+  <span style="margin-left:auto">JOBS RUN IN THE BACKGROUND · NOTHING SENDS WITHOUT YOU</span>
 </footer>
 
 <div id="setOverlay">
@@ -509,9 +509,7 @@
       <div id="setConnections" class="set-grid"></div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <input id="connApp" placeholder="app to connect (e.g. gmail)" style="flex:1;background:#111;border:1px solid #333;color:#eee;padding:8px;font:inherit">
-        <button id="connBtn" class="set-opt">CONNECT</button></div>
-      <div style="margin-top:8px"><button id="tmxBtn" class="set-opt">CONNECT TRAIL MIXX</button>
-        <span id="tmxStatus" class="set-hint"></span></div></div>
+        <button id="connBtn" class="set-opt">CONNECT</button></div></div>
     <div class="set-sect"><div class="set-lbl">TAKEOVER SPEED — HOW FAST HE DRIVES YOUR SCREEN</div>
       <div class="set-hint">Each click is a full round-trip; the model sets the pace. Faster = snappier but slightly less precise.</div>
       <div id="setSpeed" class="set-grid"></div></div>
@@ -1034,7 +1032,7 @@ async function _say(text){
     body:JSON.stringify({event:"speak_start"})}).catch(()=>{});
   try{
     const r=await fetch(demoMode?"/demo/tts":"/tts",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(demoMode?{text,session:demoSid,speaker:(VOICES.find(v=>v.name===curVoice)||{}).rime}:{text,speaker:(VOICES.find(v=>v.name===curVoice)||{}).rime})});
+      body:JSON.stringify(demoMode?{text,session:demoSid}:{text})});
     const ct=r.headers.get("Content-Type")||"";
     if(r.ok&&ct.includes("audio")&&gen===speechGen){   // barged during fetch → drop clip
       const blob=await r.blob();
@@ -1111,9 +1109,8 @@ function HONESTY_Q(v){
 // voice wardrobe — his ElevenLabs library; picked in Settings
 const VOICES=[
  {name:"TRICKSTER",id:"N2lVS1w4EtoT3dr4eOWO",blurb:"husky, sarcastic"},
- {name:"Dual",rime:"orion",blurb:"[his blurb TBD]"},
- {name:"Flip",rime:"luna",blurb:"[his blurb TBD]"},
- {name:"Sasha",rime:"celeste",blurb:"[his blurb TBD]"},
+ {name:"ULTRON",id:"UDfhuuUF0i373Ea5btA6",blurb:"cold, menacing"},
+ {name:"DEEPPOOL",id:"j0sILsZuQ2hWpw6bsZn2",blurb:"deep, dry"},
  {name:"ADAM",id:"pNInz6obpgDQGcFmaJgB",blurb:"firm, grounded"},
  {name:"CHRIS",id:"iP95p4xoKVk53GoZ742B",blurb:"warm, down-to-earth"},
  {name:"ROGER",id:"CwhRBWXzGAHq8TQ4Fs17",blurb:"laid-back (original)"},
@@ -1121,8 +1118,8 @@ const VOICES=[
  {name:"LIAM",id:"TX3LPaxmHKxFdv7VOQHJ",blurb:"young creator energy (new)"},
  {name:"CHARLIE",id:"IKne3meq5aSn9XLyUdCD",blurb:"young aussie spark (new)"},
  {name:"JESSICA",id:"cgSgspJ2msm6clMCkdW9",blurb:"young, playful, bright (new)"}];
-const VOICE_PROFILES={TRICKSTER:{pitch:.6,rate:.96},Dual:{pitch:.5,rate:.9},
- Flip:{pitch:1,rate:1.05},Sasha:{pitch:1.1,rate:1},ADAM:{pitch:.7,rate:.92},CHRIS:{pitch:.85,rate:.97},
+const VOICE_PROFILES={TRICKSTER:{pitch:.6,rate:.96},ULTRON:{pitch:.4,rate:.88},
+ DEEPPOOL:{pitch:.35,rate:.85},ADAM:{pitch:.7,rate:.92},CHRIS:{pitch:.85,rate:.97},
  ROGER:{pitch:.75,rate:.9},DANIEL:{pitch:.8,rate:.94},
  LIAM:{pitch:.9,rate:1.0},CHARLIE:{pitch:.95,rate:1.02},JESSICA:{pitch:1.05,rate:1.0}};
 const VOICE_TEST="Humor: ninety percent. Confirmed. Self-destruct sequence in T minus ten... nine... eight... I'm kidding. Mostly.";
@@ -1274,18 +1271,6 @@ async function loadConnections(){
       b.disabled=true;grid.appendChild(b);});
   }catch(e){hint.textContent="connections check failed: "+e.message;}
 }
-async function connectTrailMixx(){
-  const st=$("#tmxStatus");st.textContent="connecting...";
-  try{
-    const r=await fetch("/api/repos/connect",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({repo:"trail-mixx"})});
-    const j=await r.json();
-    st.textContent=j.ok?("connected - "+j.files+" files in the workspace"):("failed: "+(j.error||"unknown"));
-  }catch(e){st.textContent="connect failed: "+e.message;}
-}
-document.getElementById("tmxBtn")?.addEventListener("click",connectTrailMixx);
-(async()=>{try{const j=await fetch("/api/repos").then(r=>r.json());
-  if(j.ok&&(j.repos||[]).some(x=>x.repo==="trail-mixx")){const st=$("#tmxStatus");if(st)st.textContent="connected";}}catch(e){}})();
 async function connectApp(){
   const inp=$("#connApp"),slug=(inp.value||"").trim().toLowerCase();
   if(!slug)return;
