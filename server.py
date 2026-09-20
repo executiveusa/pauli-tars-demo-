@@ -3627,7 +3627,6 @@ class Handler(BaseHTTPRequestHandler):
                         "agent": MISSIONS[nid]["agent"]})
 
         elif path == "/api/repos/connect":
-            data = self._body()
             slug = re.sub(r"[^A-Za-z0-9_.-]", "", str(data.get("repo") or ""))[:80]
             if not slug:
                 self._json({"error": "repo required"}, 400); return
