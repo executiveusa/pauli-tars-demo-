@@ -1711,13 +1711,16 @@ async function deploy(){
   if(!brief){emptyNudge();return;}
   inp.value="";tx("YOU","⟩ MISSION: "+brief);
   const shot=seeStream?await grabFrame():null;   // sharing → the robot sees what you see
-  const r=await fetch("/api/mission",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({mission:brief})});
-  const j=await r.json().catch(()=>({}));
-  if(j.ok){
-    const ack=DEPLOY_ACK[Math.floor(Math.random()*DEPLOY_ACK.length)].replace("{A}","CASE");
+  // real lane: mint a confirmation bound to this exact brief, then POST /brief
+  // (same path missions actually run on; /api/mission is Vercel-only)
+  const mint=await fetch("/api/confirmations",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action:"mission.exec",payload:{brief:brief},recipient:"/brief"})}).then(r=>r.json()).catch(()=>({}));
+  const j=await fetch("/brief",{method:"POST",headers:{"Content-Type":"application/json",
+    "X-BARS-Confirmation":mint.id||""},body:JSON.stringify({brief:brief})}).then(r=>r.json()).catch(()=>({}));
+  if(j.id){
+    const ack=DEPLOY_ACK[Math.floor(Math.random()*DEPLOY_ACK.length)].replace("{A}",j.agent||"CASE");
     tx("BARS",ack);barsLine(ack,true);say(ack);openChannel();barsLaunch();
-    tx("BARS","⟩ MISSION QUEUED — "+(j.route?("lane "+j.route.lane+" · "+j.route.model):"")+(j.runId?(" · run "+j.runId):""));
+    tx("BARS","⟩ MISSION QUEUED — agent "+(j.agent||"?")+" · run "+j.id);
   }
   else tx("BARS","Deploy failed: "+(j.message||j.error||"unknown"));
 }
