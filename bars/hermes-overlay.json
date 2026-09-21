@@ -52,6 +52,20 @@
   ],
   "external_adapters": [
     {
+      "id": "jev-hands",
+      "kind": "loopback-http-ndjson",
+      "url": "http://jev-runner:8643/run",
+      "health_url": "http://jev-runner:8643/health",
+      "credential_location": "jev-runner sidecar only",
+      "credential_env": "TYPESAFE_API_KEY",
+      "rules": [
+        "single-site verifiable goals",
+        "no retry after uncertain action",
+        "BARS confirmation gates still apply"
+      ],
+      "status": "contract-only-not-wired"
+    },
+    {
       "id": "composio",
       "kind": "mcp",
       "url": "https://connect.composio.dev/mcp",
