@@ -3040,8 +3040,8 @@ class Handler(BaseHTTPRequestHandler):
             if HANDS.handle(self, "POST", self.path, data):
                 return
 
-        if path == "/chat":
-            text = (data.get("text") or "").strip()[:4000]
+        if path in ("/chat", "/api/chat"):
+            text = (data.get("text") or data.get("message") or "").strip()[:4000]
             if not text:
                 self._json({"error": "empty"}, 400); return
             # ordinary chat is conversational inference: no approval while paid
