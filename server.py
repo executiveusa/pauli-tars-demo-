@@ -236,7 +236,12 @@ def _apply_env_overrides(cfg):
     if gateway:
         # bars_router talks to the gateway directly; keep a static fallback too.
         cfg["anthropic_key"] = cfg["anthropic_key"] or gateway
-    if groq:
+    force_or = (env("BARS_PROVIDER") or "").strip().lower() == "openrouter"
+    if force_or and openrouter:
+        cfg["anthropic_key"] = openrouter
+        cfg["base_url"] = (env("BARS_BASE_URL") or "https://openrouter.ai/api/v1").strip()
+        cfg["model"] = env("BARS_MODEL") or cfg["model"]
+    elif groq:
         cfg["anthropic_key"] = groq
         cfg["base_url"] = (env("BARS_BASE_URL") or "https://api.groq.com/openai/v1").strip()
         cfg["model"] = env("BARS_MODEL") or "openai/gpt-oss-120b"
@@ -772,6 +777,39 @@ def _spend_bridge():
 
 
 def anthropic_chat(system, messages, max_tokens=600, user_message=None, tools=None):
+    """Primary lane first; on any primary failure, retry the OpenRouter free
+    tier in order (owner directive 2026-09-21: mercury default, free tier on
+    limit). Every attempt is receipted; a total failure still raises."""
+    try:
+        return _anthropic_chat_once(system, messages, max_tokens=max_tokens,
+                                    user_message=user_message, tools=tools)
+    except Exception as e:
+        _receipt({"kind": "chat_attempt", "lane": "primary",
+                  "model": str(CONFIG.get("model")), "ok": False,
+                  "error": str(e)[:200], "ms": 0})
+        _fbs = [m.strip() for m in os.environ.get(
+            "BARS_FALLBACK_MODELS",
+            "nvidia/nemotron-3.5-lightning:free,z-ai/glm-5.2:free,qwen/qwen3.8-27b:free"
+        ).split(",") if m.strip()]
+        _orig = CONFIG["model"]
+        for _fm in _fbs:
+            if _fm == _orig:
+                continue
+            try:
+                CONFIG["model"] = _fm
+                LAST_USAGE["lane"] = "free-fallback"
+                LAST_USAGE["routing"] = "primary-error"
+                return _anthropic_chat_once(system, messages, max_tokens=max_tokens,
+                                            user_message=user_message, tools=tools)
+            except Exception as e2:
+                _receipt({"kind": "chat_attempt", "lane": "free-fallback",
+                          "model": _fm, "ok": False,
+                          "error": str(e2)[:200], "ms": 0})
+            finally:
+                CONFIG["model"] = _orig
+        raise
+
+def _anthropic_chat_once(system, messages, max_tokens=600, user_message=None, tools=None):
     _cap = getattr(_COST_CAP, "value", None)
     if _cap:
         max_tokens = min(max_tokens, int(_cap))   # never exceed the shown bound
