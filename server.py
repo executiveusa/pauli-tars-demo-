@@ -890,6 +890,10 @@ def _anthropic_chat_once(system, messages, max_tokens=600, user_message=None, to
         if tools:
             _payload["tools"] = tools
             _payload["tool_choice"] = "auto"
+        if "mercury" in str(model).lower():
+            # Mercury is a reasoning model: without a low effort cap it spends
+            # the whole token budget on reasoning and returns empty content.
+            _payload["reasoning"] = {"effort": "low"}
         body = json.dumps(_payload).encode()
         req = urllib.request.Request(
             url, data=body,
