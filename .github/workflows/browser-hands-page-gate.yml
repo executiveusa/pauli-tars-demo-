@@ -1,0 +1,53 @@
+name: BARS browser-hands page gate
+on:
+  pull_request:
+    paths: ["index.html", "static/**", "agent/**", "api/**", "lib/**", "jev_hands.py", "deploy/**", "tests/browser_hands/**", ".github/workflows/browser-hands-page-gate.yml", "scripts/check_browser_hands_external.py", "tests/run_all.sh"]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  external-target-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with: {python-version: "3.12"}
+      - name: Fetch pinned external targets without vendoring
+        run: |
+          git clone --depth 1 https://github.com/browser-use/stress-tests.git /tmp/bu-stress
+          git -C /tmp/bu-stress fetch --depth 1 origin b3600b683ec97236866d77e31200fa24ec8c8f3f
+          git -C /tmp/bu-stress checkout --detach b3600b683ec97236866d77e31200fa24ec8c8f3f
+          test "$(git -C /tmp/bu-stress rev-parse HEAD)" = b3600b683ec97236866d77e31200fa24ec8c8f3f
+          git clone --depth 1 https://github.com/browser-use/benchmark.git /tmp/bu-benchmark
+          git -C /tmp/bu-benchmark fetch --depth 1 origin 421390ea7fa4708f3d89d7695f9a16debb861daf
+          git -C /tmp/bu-benchmark checkout --detach 421390ea7fa4708f3d89d7695f9a16debb861daf
+          test "$(git -C /tmp/bu-benchmark rev-parse HEAD)" = 421390ea7fa4708f3d89d7695f9a16debb861daf
+          test -f /tmp/bu-stress/src/vanilla.html
+          test -f /tmp/bu-benchmark/run_framework_eval.py
+          grep -q '"browser-use": FrameworkInfo(' /tmp/bu-benchmark/frameworks/__init__.py
+          python scripts/check_browser_hands_external.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: "22"}
+      - name: Install page runner
+        working-directory: tests/browser_hands
+        run: npm install --ignore-scripts && npx playwright install --with-deps chromium
+      - name: Serve pinned stress target and candidate BARS page
+        run: |
+          python -m http.server 4172 --bind 127.0.0.1 --directory /tmp/bu-stress >/tmp/bu-stress.log 2>&1 &
+          python -m http.server 4173 --bind 127.0.0.1 >/tmp/bars-page.log 2>&1 &
+      - name: Run real-pixel interaction gate against stress target and BARS mobile page
+        env:
+          STRESS_URL: http://127.0.0.1:4172/index.html
+          BARS_PAGE_URL: http://127.0.0.1:4173/index.html
+        working-directory: tests/browser_hands
+        run: node page_gate.mjs
+      - name: Benchmark release requirement
+        run: |
+          if [ -z "${{ secrets.BROWSER_USE_API_KEY }}" ] || [ -z "${{ secrets.GOOGLE_API_KEY }}" ]; then
+            echo "Benchmark secrets missing. Browser-hands release gate cannot pass." >&2
+            exit 1
+          fi
+          echo "Pinned browser-use/benchmark target is available. Live framework evaluation is required in the server-key release environment."
