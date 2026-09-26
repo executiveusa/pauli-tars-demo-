@@ -23,6 +23,12 @@ ACCEPTED_ROUTES = {"operator", "engineering"}
 CONTROL_URL = os.environ.get("PAULI_CONTROL_URL", "").rstrip("/")
 ENGINEERING_MODES = {"plan", "read", "write", "ship"}
 ENG_PREFIX = "eng-"
+# Video: operator missions with capability "video.render" go to the HyperFrames render service
+# (media/hyperframes). The agent authors the project first; this only lints and renders it.
+RENDER_URL = os.environ.get("HYPERFRAMES_RENDER_URL", "").rstrip("/")
+VIDEO_CAPABILITY = "video.render"
+VID_PREFIX = "vid-"
+RENDER_FIELDS = ("project", "composition", "format", "quality", "fps", "variables", "timeoutMinutes")
 
 
 def _token_ok(header_value):
@@ -64,6 +70,36 @@ def _control(path, method="GET", body=None, timeout=15):
     )
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def _render_service(path, method="GET", body=None, timeout=15):
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        RENDER_URL + path,
+        data=data,
+        method=method,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('HYPERFRAMES_RENDER_TOKEN', '')}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def _mission_capability(mission):
+    context = mission.get("context") if isinstance(mission.get("context"), dict) else {}
+    return mission.get("capability") or context.get("capability")
+
+
+def _render_request(mission):
+    """The render parameters travel in mission.render (or context.render); `project` is required and is
+    resolved by the render service inside its workspace, never here."""
+    context = mission.get("context") if isinstance(mission.get("context"), dict) else {}
+    spec = mission.get("render") if isinstance(mission.get("render"), dict) else context.get("render")
+    if not isinstance(spec, dict) or not isinstance(spec.get("project"), str) or not spec["project"].strip():
+        raise ValueError("video.render needs render.project (a HyperFrames project folder in the render workspace)")
+    return {key: spec[key] for key in RENDER_FIELDS if key in spec}
 
 
 def _engineering_request(mission):
@@ -137,6 +173,9 @@ class Handler(BaseHTTPRequestHandler):
             if bars_mission_id.startswith(ENG_PREFIX):
                 self._engineering_status(bars_mission_id)
                 return
+            if bars_mission_id.startswith(VID_PREFIX):
+                self._render_status(bars_mission_id)
+                return
             try:
                 mission = _request(f"/mission/{bars_mission_id}", timeout=10)
                 mapped = _terminal(mission.get("status"))
@@ -184,6 +223,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "engineering":
             self._invoke_engineering(mission)
+            return
+        if route == "operator" and _mission_capability(mission) == VIDEO_CAPABILITY:
+            self._invoke_render(mission)
             return
 
         started = time.time()
@@ -322,6 +364,78 @@ class Handler(BaseHTTPRequestHandler):
             "evidence": evidence,
             "failures": [errors[-500:] or f"job ended with status {raw}"] if mapped == "failed" else [],
             "completed_at": job.get("finishedAt") if mapped in {"done", "failed"} else None,
+        })
+
+    def _invoke_render(self, mission):
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        if not RENDER_URL or len(os.environ.get("HYPERFRAMES_RENDER_TOKEN", "")) < 32:
+            self._envelope(mission, "failed", "BARS video engine is not configured.", 503,
+                           failures=["Set HYPERFRAMES_RENDER_URL and HYPERFRAMES_RENDER_TOKEN on the BARS adapter."],
+                           next_action="Start media/hyperframes, then retry through Terabithia.",
+                           completed_at=now)
+            return
+        try:
+            request = _render_request(mission)
+        except ValueError as exc:
+            self._json({"error": str(exc)}, 400)
+            return
+        try:
+            started = _render_service("/render", "POST", request, timeout=30)
+            job_id = str(started.get("jobId") or "")
+            if not job_id:
+                raise RuntimeError(started.get("error") or "render service did not return a job id")
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = json.loads(exc.read() or b"{}").get("error", "")
+            except Exception:
+                pass
+            self._envelope(mission, "failed", "BARS video engine refused the render.", 502 if exc.code != 429 else 429,
+                           failures=[f"HTTP {exc.code}: {detail}"[:500]], completed_at=now)
+            return
+        except Exception as exc:
+            self._envelope(mission, "failed", "BARS video render dispatch failed.", 502,
+                           failures=[str(exc)[:500]], completed_at=now)
+            return
+        receipt = VID_PREFIX + job_id
+        self._envelope(mission, "working", f"BARS started render {job_id} for {request['project']}.", 202,
+                       evidence=[
+                           {"type": "external_state", "ref": f"bars://video/{job_id}", "summary": "HyperFrames render receipt"},
+                           {"type": "trace", "ref": f"trace://{mission['trace_id']}"},
+                       ],
+                       next_action=f"Poll /api/terabithia/status/{receipt} for the rendered file.",
+                       runtime={"bars_mission_id": receipt, "render_job_id": job_id})
+
+    def _render_status(self, receipt):
+        job_id = receipt[len(VID_PREFIX):]
+        if not RENDER_URL:
+            self._json({"error": "video engine not configured"}, 503)
+            return
+        try:
+            job = _render_service(f"/renders/{job_id}", timeout=10)
+        except urllib.error.HTTPError as exc:
+            self._json({"error": f"video engine returned HTTP {exc.code}"}, 404 if exc.code == 404 else 502)
+            return
+        except Exception as exc:
+            self._json({"error": str(exc)[:300]}, 502)
+            return
+        raw = str(job.get("status") or "")
+        mapped = {"queued": "working", "linting": "working", "rendering": "working", "success": "done",
+                  "error": "failed", "timeout": "failed", "stopped": "cancelled"}.get(raw, "working")
+        artifact = job.get("artifact") if isinstance(job.get("artifact"), dict) else None
+        evidence = [{"type": "external_state", "ref": f"bars://video/{job_id}", "summary": raw or "render state"}]
+        if mapped == "done" and artifact:
+            evidence.append({"type": "artifact", "ref": f"file://{artifact.get('path')}",
+                             "summary": f"{artifact.get('bytes')} bytes, sha256 {artifact.get('sha256')}"})
+        errors = str(job.get("error") or job.get("stderr") or "").strip()
+        self._json({
+            "bars_mission_id": receipt,
+            "status": mapped,
+            "raw_status": raw,
+            "summary": f"Render {job_id} is {raw or 'in progress'}." if mapped != "done" else f"Render {job_id} finished.",
+            "evidence": evidence,
+            "failures": [errors[-500:] or f"render ended with status {raw}"] if mapped == "failed" else [],
+            "completed_at": job.get("finishedAt") if mapped in {"done", "failed", "cancelled"} else None,
         })
 
 

@@ -6,6 +6,7 @@ on:
       - "tests/test_terabithia_adapter.py"
       - "Launch BARS.command"
       - "engineering/pauli-control/**"
+      - "media/hyperframes/**"
       - ".github/workflows/terabithia-adapter.yml"
 permissions:
   contents: read
@@ -23,3 +24,5 @@ jobs:
       - run: bash -n 'Launch BARS.command'
       - run: npm ci --no-audit --no-fund && npm test
         working-directory: engineering/pauli-control
+      - run: npm ci --no-audit --no-fund && npm test
+        working-directory: media/hyperframes

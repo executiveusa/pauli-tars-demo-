@@ -33,6 +33,27 @@ class FakeControl(BaseHTTPRequestHandler):
         control_calls.append((self.path, self.headers.get("Authorization"), None))
         self._send(200, {"status": "success", "stdout": "patched 2 files; tests pass", "stderr": "", "finishedAt": "2026-09-26T07:00:00Z"})
 
+RENDER_TOKEN = "v" * 40
+render_calls = []
+class FakeRender(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(code); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        render_calls.append((self.path, self.headers.get("Authorization"), body))
+        self._send(202, {"jobId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "status": "linting"})
+    def do_GET(self):
+        render_calls.append((self.path, self.headers.get("Authorization"), None))
+        self._send(200, {"status": "success", "finishedAt": "2026-09-26T11:00:00Z",
+                         "artifact": {"path": "/w/launch/renders/x.mp4", "bytes": 454381, "sha256": "d" * 64}})
+
+render = ThreadingHTTPServer(("127.0.0.1", 0), FakeRender)
+threading.Thread(target=render.serve_forever, daemon=True).start()
+os.environ["HYPERFRAMES_RENDER_URL"] = f"http://127.0.0.1:{render.server_address[1]}"
+os.environ["HYPERFRAMES_RENDER_TOKEN"] = RENDER_TOKEN
+
 fake = ThreadingHTTPServer(("127.0.0.1", 0), FakeBars)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
 control = ThreadingHTTPServer(("127.0.0.1", 0), FakeControl)
@@ -79,6 +100,25 @@ calls_before = len(control_calls)
 s, b = invoke("engineering"); check("unconfigured bridge: refused 503, nothing faked", s == 503 and b.get("status") == "failed" and len(control_calls) == calls_before, f"{s}")
 ta.CONTROL_URL = saved
 s, _ = invoke(["engineering"]); check("non-string route is a 409, not a 500", s == 409, f"{s}")
+
+# video.render on the operator route goes to the HyperFrames render service, not the /brief mission path
+s, b = invoke("operator", capability="video.render", render={"project": "launch", "quality": "draft", "evil": "x"})
+vid = (b.get("runtime") or {}).get("bars_mission_id", "")
+check("video.render dispatched to the render service", s == 202 and vid.startswith("vid-"), f"{s} {vid}")
+path_, auth, body = render_calls[-1]
+check("render service got its own bearer and only known fields",
+      path_ == "/render" and auth == f"Bearer {RENDER_TOKEN}" and body == {"project": "launch", "quality": "draft"}, str(render_calls[-1]))
+s, st = status(vid)
+check("render status done carries the artifact hash as evidence",
+      s == 200 and st.get("status") == "done" and any("sha256 " + "d" * 64 in e.get("summary", "") for e in st.get("evidence", [])), f"{s} {st.get('status')}")
+s, _ = invoke("operator", capability="video.render"); check("video.render without a project refused", s == 400, f"{s}")
+saved, ta.RENDER_URL = ta.RENDER_URL, ""
+before_calls = len(render_calls)
+s, b = invoke("operator", capability="video.render", render={"project": "launch"})
+check("unconfigured video engine: 503, nothing faked", s == 503 and b.get("status") == "failed" and len(render_calls) == before_calls, f"{s}")
+ta.RENDER_URL = saved
+before_calls = len(render_calls)
+s, _ = invoke("operator"); check("plain operator mission still goes to BARS, not the render service", s == 202 and len(render_calls) == before_calls, f"{s}")
 s, _ = invoke("operator"); check("operator route still accepted", s == 202, f"{s}")
 s, _ = invoke("personal"); check("personal route refused", s == 409, f"{s}")
 s, _ = invoke("engineering", token=None); check("missing token refused", s == 401, f"{s}")
