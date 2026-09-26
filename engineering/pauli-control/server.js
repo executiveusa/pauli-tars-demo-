@@ -15,6 +15,7 @@ const CONTROL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const JOB_DIR = path.resolve(process.env.PAULI_CONTROL_JOB_DIR || path.join(CONTROL_DIR, "jobs"));
 
 const PORT = Number(process.env.PORT || 8787);
+const HOST = process.env.HOST || "127.0.0.1";
 const TOKEN = process.env.PAULI_CONTROL_TOKEN;
 const WORKSPACE_ROOT = path.resolve(process.env.PAULI_WORKSPACE_ROOT || process.cwd());
 const PAULI_REPO_ROOT = path.resolve(process.env.PAULI_REPO_ROOT || WORKSPACE_ROOT);
@@ -344,6 +345,6 @@ app.post("/runs/:jobId/stop", requireAuth, (req, res) => {
   res.json({ ok: true, message: "Stop signal sent." });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, HOST, () => {
   console.log(`Pauli Control Bridge listening on http://0.0.0.0:${PORT}`);
 });
