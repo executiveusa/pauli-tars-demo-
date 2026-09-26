@@ -1,0 +1,18 @@
+{
+  "name": "bars-hyperframes-render",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/render.test.mjs"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "hyperframes": "0.8.78"
+  }
+}
