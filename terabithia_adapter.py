@@ -4,6 +4,8 @@
 Keeps the existing BARS cockpit/server untouched while exposing a narrow,
 standard fleet contract on port 4324.
 """
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -13,6 +15,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BARS_URL = os.environ.get("BARS_LOCAL_URL", "http://127.0.0.1:4321").rstrip("/")
 PORT = int(os.environ.get("BARS_TERABITHIA_PORT", "4324"))
+# BARS owns two fleet routes: "operator" (computer use, media) and, since the 2026-09-26 split that
+# made Pi personal-only, "engineering" (code, repos, PRs, builds).
+ACCEPTED_ROUTES = {"operator", "engineering"}
+
+
+def _token_ok(header_value):
+    """Terabithia sends Authorization: Bearer $BARS_TOKEN. When BARS_TERABITHIA_TOKEN is set it is
+    required; the adapter binds loopback, so an unset token keeps today's behavior."""
+    expected = os.environ.get("BARS_TERABITHIA_TOKEN", "").strip()
+    if not expected:
+        return True
+    raw = str(header_value or "")
+    provided = raw[7:].strip() if raw.lower().startswith("bearer ") else ""
+    a = hashlib.sha256(provided.encode()).digest()
+    b = hashlib.sha256(expected.encode()).digest()
+    return bool(provided) and hmac.compare_digest(a, b)
 
 
 def _request(path, method="GET", body=None, timeout=15):
@@ -74,6 +92,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         prefix = "/api/terabithia/status/"
+        if path.startswith(prefix) and not _token_ok(self.headers.get("Authorization")):
+            self._json({"error": "unauthorized"}, 401)
+            return
         if path.startswith(prefix):
             bars_mission_id = path[len(prefix):].strip()
             if not bars_mission_id or "/" in bars_mission_id or ".." in bars_mission_id:
@@ -110,14 +131,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
             return
 
+        if not _token_ok(self.headers.get("Authorization")):
+            self._json({"error": "unauthorized"}, 401)
+            return
+
         mission = self._body()
         required = ("mission_id", "request_id", "conversation_id", "trace_id", "target", "route", "user_intent")
         missing = [key for key in required if not str(mission.get(key, "")).strip()]
         if missing:
             self._json({"error": "missing required mission fields", "fields": missing}, 400)
             return
-        if mission.get("target") != "bars" or mission.get("route") != "operator":
-            self._json({"error": "BARS only accepts operator missions targeted to bars"}, 409)
+        if mission.get("target") != "bars" or mission.get("route") not in ACCEPTED_ROUTES:
+            self._json({"error": "BARS only accepts operator or engineering missions targeted to bars"}, 409)
             return
 
         started = time.time()
@@ -132,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
                 "trace_id": mission["trace_id"],
                 "agent_id": "bars",
                 "status": "working",
-                "summary": f"BARS accepted the operator mission as {bars_mission_id}.",
+                "summary": f"BARS accepted the {mission['route']} mission as {bars_mission_id}.",
                 "artifacts": [],
                 "evidence": [
                     {"type": "external_state", "ref": f"bars://mission/{bars_mission_id}", "summary": "BARS mission receipt"},
