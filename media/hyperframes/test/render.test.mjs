@@ -17,13 +17,14 @@ const outside = path.join(tmp, "outside");
 const calls = path.join(tmp, "calls.jsonl");
 const fakeHf = path.join(tmp, "fake-hyperframes.mjs");
 
-function project(name, { lintFails = false, slow = false } = {}) {
+function project(name, { lintFails = false, slow = false, stubborn = false } = {}) {
   const dir = path.join(workspace, name);
   fs.mkdirSync(path.join(dir, "compositions"), { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), "<div data-composition-id='main'></div>");
   fs.writeFileSync(path.join(dir, "compositions", "intro.html"), "<template></template>");
   if (lintFails) fs.writeFileSync(path.join(dir, ".lint-fails"), "");
   if (slow) fs.writeFileSync(path.join(dir, ".slow"), "");
+  if (stubborn) fs.writeFileSync(path.join(dir, ".stubborn"), "");
   return name;
 }
 
@@ -38,6 +39,7 @@ const argv = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ argv, cwd: process.cwd(), env: process.env }) + "\\n");
 if (argv[0] === "lint") process.exit(fs.existsSync(".lint-fails") ? 1 : 0);
 if (argv[0] === "render") {
+  if (fs.existsSync(".stubborn")) { process.on("SIGTERM", () => {}); fs.writeFileSync(".ignoring-sigterm", ""); } // like a stuck ffmpeg
   if (fs.existsSync(".slow")) { setTimeout(() => {}, 60000); }
   else { fs.writeFileSync(argv[argv.indexOf("--output") + 1], "FAKEVIDEO"); }
 }
@@ -50,12 +52,12 @@ function freePort() {
     const s = net.createServer().listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => resolve(port)); });
   });
 }
-async function startService(hfBin) {
+async function startService(hfBin, { jobDir, extraEnv = {} } = {}) {
   const port = await freePort();
   const child = spawn(process.execPath, [SERVER], {
     env: {
       PATH: process.env.PATH, PORT: String(port), HYPERFRAMES_RENDER_TOKEN: TOKEN,
-      HYPERFRAMES_WORKSPACE_ROOT: workspace, HYPERFRAMES_JOB_DIR: path.join(tmp, `jobs-${port}`), HF_BIN: hfBin,
+      HYPERFRAMES_WORKSPACE_ROOT: workspace, HYPERFRAMES_JOB_DIR: jobDir || path.join(tmp, `jobs-${port}`), HF_BIN: hfBin, ...extraEnv,
       OPENAI_API_KEY: "provider-key", PAULI_PI_AGENT_API_KEY: "personal-key",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -74,8 +76,8 @@ const call = async (base, method, url, body, token = TOKEN) => {
   });
   return { status: res.status, body: await res.json() };
 };
-async function settled(base, jobId) {
-  for (let i = 0; i < 200; i++) {
+async function settled(base, jobId, tries = 200) {
+  for (let i = 0; i < tries; i++) {
     const { body } = await call(base, "GET", `/renders/${jobId}`);
     if (!["queued", "linting", "rendering"].includes(body.status)) return body;
     await new Promise((r) => setTimeout(r, 25));
@@ -98,6 +100,11 @@ test("health is liveness only; everything else needs the bearer", async () => {
 test("invalid requests are refused before anything runs", async () => {
   project("ok");
   const bad = [
+    {},
+    { project: "" },
+    { project: "   " },
+    { project: "." },
+    { project: "ok", idempotencyKey: "has spaces" },
     { project: "missing" },
     { project: "escape" },
     { project: "ok", format: "exe" },
@@ -173,4 +180,76 @@ test("a missing hyperframes binary fails the job instead of crashing the service
   assert.equal(job.status, "error");
   assert.match(job.stderr, /Could not start hyperframes/);
   assert.equal((await call(broken, "GET", "/health", null, null)).status, 200);
+});
+
+test("a retried mission with the same idempotency key reuses its render", async () => {
+  project("retry");
+  const first = await call(base, "POST", "/render", { project: "retry", idempotencyKey: "tb:mission-1" });
+  assert.equal(first.status, 202);
+  await settled(base, first.body.jobId);
+  const again = await call(base, "POST", "/render", { project: "retry", idempotencyKey: "tb:mission-1" });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.jobId, first.body.jobId);
+  assert.equal(again.body.reused, true);
+});
+
+test("variables files are deleted once the job ends", async () => {
+  project("vars");
+  const { body } = await call(base, "POST", "/render", { project: "vars", variables: { secret: "x" } });
+  const job = await settled(base, body.jobId);
+  assert.equal(job.status, "success");
+  const jobDir = path.dirname(lastCalls().at(-1).argv[lastCalls().at(-1).argv.indexOf("--variables-file") + 1]);
+  assert.equal(fs.existsSync(path.join(jobDir, `${body.jobId}.vars.json`)), false);
+});
+
+test("a renders/ symlink cannot send output outside the workspace", async () => {
+  project("sneaky");
+  fs.symlinkSync(outside, path.join(workspace, "sneaky", "renders"));
+  const { body } = await call(base, "POST", "/render", { project: "sneaky" });
+  const job = await settled(base, body.jobId);
+  assert.equal(job.status, "error");
+  assert.match(job.error, /symlink/);
+  assert.deepEqual(fs.readdirSync(outside), ["index.html"]);
+});
+
+test("a render that ignores SIGTERM is killed, so the slot frees up", async () => {
+  project("stuck", { slow: true, stubborn: true });
+  const { body } = await call(base, "POST", "/render", { project: "stuck" });
+  // Wait until the fake render has installed its SIGTERM handler.
+  for (let i = 0; i < 200 && !fs.existsSync(path.join(workspace, "stuck", ".ignoring-sigterm")); i++) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  await call(base, "POST", `/renders/${body.jobId}/stop`);
+  assert.equal((await call(base, "GET", `/renders/${body.jobId}`)).body.status, "stopped");
+  // The slot frees only when the process is really gone: after the 5s SIGKILL grace, not before.
+  project("after-stuck");
+  const startedAt = Date.now();
+  let next;
+  do {
+    next = await call(base, "POST", "/render", { project: "after-stuck" });
+    if (next.status === 429) await new Promise((r) => setTimeout(r, 100));
+  } while (next.status === 429 && Date.now() - startedAt < 10000);
+  assert.equal(next.status, 202, "slot never freed: the stuck render was not killed");
+  assert.ok(Date.now() - startedAt >= 4000, "slot freed before the stuck process could have died");
+  await settled(base, next.body.jobId);
+});
+
+test("jobs interrupted by a restart are reported as failed, not in progress", async () => {
+  const jobDir = path.join(tmp, "jobs-restart");
+  fs.mkdirSync(jobDir);
+  const id = "11111111-2222-4333-8444-555555555555";
+  fs.writeFileSync(path.join(jobDir, `${id}.json`), JSON.stringify({ id, status: "rendering", idempotencyKey: "tb:old" }));
+  const restarted = await startService(fakeHf, { jobDir });
+  const job = (await call(restarted, "GET", `/renders/${id}`)).body;
+  assert.equal(job.status, "error");
+  assert.match(job.error, /restarted/);
+});
+
+test("a non-numeric HYPERFRAMES_MAX_RUNNING still limits to one render", async () => {
+  const limited = await startService(fakeHf, { extraEnv: { HYPERFRAMES_MAX_RUNNING: "abc" } });
+  project("long2", { slow: true });
+  const first = await call(limited, "POST", "/render", { project: "long2" });
+  assert.equal(first.status, 202);
+  assert.equal((await call(limited, "POST", "/render", { project: "ok" })).status, 429);
+  await call(limited, "POST", `/renders/${first.body.jobId}/stop`);
 });

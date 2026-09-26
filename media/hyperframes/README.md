@@ -36,7 +36,8 @@ Terabithia ── operator + capability video.render ──> BARS adapter (terab
 }
 ```
 
-- `project` is required. It is a folder under the workspace; the service resolves symlinks and refuses anything that leads outside the workspace.
+- `project` is required. It is a folder under the workspace (not the workspace itself); the service resolves symlinks and refuses anything that leads outside the workspace.
+- The adapter sends `idempotencyKey` (from the mission id). A retried mission gets its existing render back (`200`, `reused: true`) instead of starting a second one.
 - `format` is `mp4`, `webm`, `mov` or `gif`.
 - `quality` is `draft`, `looks` (the default), `delivery`, `standard` or `high`.
 - `fps` is `24`, `25`, `30`, `50` or `60`.
@@ -51,13 +52,19 @@ Poll `/api/terabithia/status/vid-<jobId>`. The result is `done` with the artifac
 - The render process gets system basics only: no provider keys, no Pi keys, no service tokens. Telemetry is off (`HYPERFRAMES_NO_TELEMETRY=1`).
 - A failed lint stops the job before rendering.
 - The job only counts as a success if a non-empty output file exists. HyperFrames can exit 0 without producing a file (for example when `ffprobe` is missing), and that is reported as an error.
-- Only one render runs at a time (`HYPERFRAMES_MAX_RUNNING`). A second request gets a 429.
+- Only one render runs at a time (`HYPERFRAMES_MAX_RUNNING`; a non-integer value falls back to 1). A second request gets a 429.
+- Stop and timeout send SIGTERM, then SIGKILL after 5 seconds, so a stuck Chrome or FFmpeg cannot hold the slot forever.
+- `renders/` must be a real folder inside the project; a symlink is refused, so output cannot land outside the workspace.
+- Render variables are written to a private file for the render and deleted when the job ends.
+- The artifact hash is streamed, so large videos are never loaded into memory.
+- After a restart, jobs that were in flight are marked `error` ("interrupted"), never left as in progress.
+- **Network:** compositions are agent-written code. Run the service with `bars-hyperframes.service`, which blocks private networks and the cloud metadata endpoint for Chrome and FFmpeg too (see the comments in that file for what loopback access remains).
 - Job ids are UUIDs. The service binds to `127.0.0.1` unless you set `HOST`.
 
 ## Run on the VPS
 
 Requirements:
-- Node 22+.
+- Node 22.12+ (puppeteer's browser installer requires it).
 - `ffmpeg` **and** `ffprobe`: `apt-get install -y ffmpeg`.
 - Chrome. HyperFrames downloads its own copy on first render, or you can set `PUPPETEER_EXECUTABLE_PATH`.
 - Network access to the CDNs your compositions load (GSAP and similar), or keep those libraries inside the project.
@@ -67,6 +74,8 @@ cd media/hyperframes && npm ci
 HYPERFRAMES_RENDER_TOKEN=<32+ chars> HYPERFRAMES_WORKSPACE_ROOT=/srv/video npm start   # port 8788
 npx hyperframes doctor            # checks Chrome / FFmpeg / FFprobe
 ```
+
+In production, install `bars-hyperframes.service` (systemd) instead of running `npm start` by hand.
 
 On the BARS adapter, set `HYPERFRAMES_RENDER_URL=http://127.0.0.1:8788` and the same `HYPERFRAMES_RENDER_TOKEN`.
 
@@ -91,6 +100,6 @@ The kit pins `hyperframes` 0.7.109 for its own lint and preview. The render serv
 
 ## Tests
 
-`npm test` runs 7 tests against a fake `hyperframes` binary, so no Chrome is needed. They cover auth, validation, the workspace boundary, literal arguments, the lint gate, artifact evidence, one render at a time, stop, and a missing binary.
+`npm test` runs 13 tests against a fake `hyperframes` binary, so no Chrome is needed. They cover auth, validation, the workspace boundary, literal arguments, the lint gate, artifact evidence, one render at a time, stop, a missing binary, idempotent retries, variables cleanup, a `renders/` symlink, a render that ignores SIGTERM, restart reconciliation, and a bad `HYPERFRAMES_MAX_RUNNING`.
 
 The adapter's side is covered in `tests/test_terabithia_adapter.py`.

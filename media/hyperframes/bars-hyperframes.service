@@ -1,0 +1,53 @@
+# BARS video engine (media/hyperframes) as a locked-down systemd service.
+#
+#   sudo cp media/hyperframes/bars-hyperframes.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bars-hyperframes
+#
+# Compositions are agent-authored HTML and JavaScript, and Chrome runs them. IPAddressDeny applies to
+# the whole service cgroup, Chrome and FFmpeg included, so a composition cannot reach private
+# networks or the cloud metadata endpoint (169.254.169.254). Public hosts (CDNs for GSAP and the like)
+# stay reachable. Loopback stays open because the adapter calls this service there and HyperFrames
+# serves the composition to Chrome over it: every other loopback service on the box must require
+# its own bearer (pauli-control, the BARS adapter and this service all do).
+#
+# Secrets live in /etc/bars/hyperframes.env (mode 600): HYPERFRAMES_RENDER_TOKEN=<32+ chars>.
+# ExecStart assumes Node 22.12+ at /usr/bin/node; point it at `command -v node` if yours lives elsewhere.
+
+[Unit]
+Description=BARS video engine (HyperFrames render service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bars-video
+Group=bars-video
+WorkingDirectory=/opt/bars/media/hyperframes
+EnvironmentFile=/etc/bars/hyperframes.env
+Environment=NODE_ENV=production HOST=127.0.0.1 PORT=8788
+Environment=HYPERFRAMES_WORKSPACE_ROOT=/srv/video/kit/video-projects
+Environment=HYPERFRAMES_JOB_DIR=/var/lib/bars-video/jobs
+Environment=HOME=/var/lib/bars-video
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+
+# Network: private ranges, link-local (metadata) and carrier-grade NAT are blocked.
+IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10
+
+# Filesystem and privileges.
+StateDirectory=bars-video
+ReadWritePaths=/srv/video
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

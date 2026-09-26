@@ -24,12 +24,13 @@ export HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1 ($2)" >&2; exit 1; }; }
 need git "apt-get install -y git"
-need node "Node.js 22+"
-need npx "Node.js 22+"
+need node "Node.js 22.12+"
+need npx "Node.js 22.12+"
 need ffmpeg "apt-get install -y ffmpeg"
 need ffprobe "apt-get install -y ffmpeg (ffprobe ships with it)"
-node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' \
-  || { echo "Node.js 22+ required (found $(node -v))" >&2; exit 1; }
+# 22.12+: puppeteer's browser installer (a render dependency) requires it.
+node -e 'const [maj, min] = process.versions.node.split(".").map(Number); process.exit(maj > 22 || (maj === 22 && min >= 12) ? 0 : 1)' \
+  || { echo "Node.js 22.12+ required (found $(node -v))" >&2; exit 1; }
 
 echo "== 1/3 official HyperFrames core skills"
 npx --yes hyperframes@0.8.78 skills update
@@ -52,7 +53,9 @@ for excluded in assets DESIGN.ais-example.md examples/showcase; do
 done
 
 echo "== 3/3 kit dependencies and self-test"
-(cd "$KIT_DIR" && npm ci --no-audit --no-fund && npm test)
+# Third-party install hooks and tests run with a clean environment: no tokens or keys from this shell.
+clean_env() { env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 "$@"; }
+(cd "$KIT_DIR" && clean_env npm ci --no-audit --no-fund && clean_env npm test)
 
 skills=$(ls "$KIT_DIR/.claude/skills" | tr '\n' ' ')
 echo

@@ -20,7 +20,10 @@ const HOST = process.env.HOST || "127.0.0.1";
 const TOKEN = process.env.HYPERFRAMES_RENDER_TOKEN;
 const WORKSPACE_ROOT = path.resolve(process.env.HYPERFRAMES_WORKSPACE_ROOT || path.join(HERE, "workspace"));
 const HF_BIN = process.env.HF_BIN || path.join(HERE, "node_modules", ".bin", "hyperframes");
-const MAX_RUNNING = Math.max(1, Number(process.env.HYPERFRAMES_MAX_RUNNING || 1)); // Chrome + FFmpeg are heavy
+// Chrome + FFmpeg are heavy. A bad value falls back to 1; NaN would silently disable the limit.
+const parsedMaxRunning = Number(process.env.HYPERFRAMES_MAX_RUNNING || 1);
+const MAX_RUNNING = Number.isInteger(parsedMaxRunning) && parsedMaxRunning >= 1 ? parsedMaxRunning : 1;
+const KILL_GRACE_MS = 5000; // SIGTERM first; SIGKILL if Chrome/FFmpeg ignore it
 
 if (!TOKEN || TOKEN.length < 32) {
   throw new Error("HYPERFRAMES_RENDER_TOKEN is missing or too short.");
@@ -30,7 +33,10 @@ fs.mkdirSync(JOB_DIR, { recursive: true });
 fs.mkdirSync(WORKSPACE_ROOT, { recursive: true });
 
 const running = new Map(); // jobId -> { job, child } for renders in flight
+const byIdempotencyKey = new Map(); // caller's idempotency key -> jobId, so a retried mission reuses its render
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+const TERMINAL = new Set(["success", "error", "timeout", "stopped"]);
 const FORMATS = { mp4: "mp4", webm: "webm", mov: "mov", gif: "gif" };
 const QUALITIES = new Set(["draft", "looks", "delivery", "standard", "high"]);
 const FPS = new Set([24, 25, 30, 50, 60]);
@@ -85,6 +91,50 @@ function readJob(id) {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
 }
 
+// On start, a job left queued/linting/rendering lost its process when the service stopped. Record that
+// instead of reporting it as in progress forever, and rebuild the idempotency index.
+function reconcileJobs() {
+  for (const name of fs.readdirSync(JOB_DIR)) {
+    const id = name.replace(/\.json$/, "");
+    if (!JOB_ID.test(id) || name !== `${id}.json`) continue;
+    let job;
+    try {
+      job = JSON.parse(fs.readFileSync(path.join(JOB_DIR, name), "utf8"));
+    } catch {
+      continue;
+    }
+    if (!TERMINAL.has(job.status)) {
+      job.status = "error";
+      job.error = "Interrupted: the render service restarted while this job was running.";
+      job.finishedAt = new Date().toISOString();
+      saveJob(job);
+    }
+    if (job.idempotencyKey) byIdempotencyKey.set(job.idempotencyKey, job.id);
+    fs.rmSync(path.join(JOB_DIR, `${id}.vars.json`), { force: true });
+  }
+}
+reconcileJobs();
+
+// Stop a child: SIGTERM, then SIGKILL if it is still running after the grace period.
+function terminate(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  const escalate = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }, KILL_GRACE_MS);
+  escalate.unref();
+}
+
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    fs.createReadStream(file)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("end", () => resolve(hash.digest("hex")))
+      .on("error", reject);
+  });
+}
+
 function clip(text, max = 20000) {
   return text.length > max ? text.slice(text.length - max) : text;
 }
@@ -103,7 +153,14 @@ function parseRequest(body) {
   if (body.variables !== undefined && (typeof body.variables !== "object" || body.variables === null || Array.isArray(body.variables))) {
     throw new Error("variables must be a JSON object.");
   }
+  if (typeof body.project !== "string" || body.project.trim() === "") {
+    throw new Error("project is required: the name of a project folder in the workspace.");
+  }
+  if (body.idempotencyKey !== undefined && (typeof body.idempotencyKey !== "string" || !IDEMPOTENCY_KEY.test(body.idempotencyKey))) {
+    throw new Error("idempotencyKey must be 1-128 characters of letters, digits, '.', '_', ':' or '-'.");
+  }
   const projectDir = inside(WORKSPACE_ROOT, body.project, "project");
+  if (projectDir === fs.realpathSync(WORKSPACE_ROOT)) throw new Error("project must be a folder inside the workspace, not the workspace itself.");
   if (!fs.statSync(projectDir).isDirectory()) throw new Error("project must be a directory.");
   let composition = null;
   if (body.composition !== undefined && body.composition !== ".") {
@@ -113,7 +170,7 @@ function parseRequest(body) {
   } else if (!fs.existsSync(path.join(projectDir, "index.html"))) {
     throw new Error("project has no index.html.");
   }
-  return { projectDir, composition, format, quality, fps, timeoutMinutes, variables: body.variables };
+  return { projectDir, composition, format, quality, fps, timeoutMinutes, variables: body.variables, idempotencyKey: body.idempotencyKey };
 }
 
 // Run one hyperframes step (lint, then render) as literal argv; resolve with its exit code.
@@ -124,8 +181,8 @@ function step(job, args, killAfterMs) {
     const timer = setTimeout(() => {
       job.status = "timeout";
       job.stderr = clip(`${job.stderr}\nTimed out after ${job.timeoutMinutes} minutes.`);
-      child.kill("SIGTERM");
-    }, killAfterMs);
+      terminate(child);
+    }, Math.max(0, killAfterMs));
     child.stdout.on("data", (chunk) => { job.stdout = clip(job.stdout + chunk.toString()); });
     child.stderr.on("data", (chunk) => { job.stderr = clip(job.stderr + chunk.toString()); });
     child.on("error", (err) => {
@@ -142,6 +199,7 @@ function step(job, args, killAfterMs) {
 
 async function runJob(job, request) {
   const deadline = Date.now() + request.timeoutMinutes * 60 * 1000;
+  const varsFile = path.join(JOB_DIR, `${job.id}.vars.json`);
   try {
     job.status = "linting";
     saveJob(job);
@@ -157,11 +215,19 @@ async function runJob(job, request) {
     if (request.composition) args.push("--composition", request.composition);
     if (request.fps) args.push("--fps", String(request.fps));
     if (request.variables) {
-      const varsFile = path.join(JOB_DIR, `${job.id}.vars.json`);
-      fs.writeFileSync(varsFile, JSON.stringify(request.variables));
+      fs.writeFileSync(varsFile, JSON.stringify(request.variables), { mode: 0o600 });
       args.push("--variables-file", varsFile);
     }
-    fs.mkdirSync(path.join(job.projectDir, "renders"), { recursive: true });
+    // The output folder must be a real folder inside the project: a `renders` symlink written by an
+    // agent would otherwise send the render (and the reported artifact) outside the workspace.
+    const rendersDir = path.join(job.projectDir, "renders");
+    if (fs.existsSync(rendersDir) && fs.lstatSync(rendersDir).isSymbolicLink()) {
+      throw new Error("renders/ must be a folder, not a symlink.");
+    }
+    fs.mkdirSync(rendersDir, { recursive: true });
+    if (fs.realpathSync(rendersDir) !== path.join(fs.realpathSync(job.projectDir), "renders")) {
+      throw new Error("renders/ must stay inside the project.");
+    }
     job.status = "rendering";
     saveJob(job);
     const code = await step(job, args, deadline - Date.now());
@@ -173,17 +239,16 @@ async function runJob(job, request) {
       return;
     }
     // Evidence of the actual artifact, not just an exit code.
-    job.artifact = {
-      path: outputFile,
-      bytes: fs.statSync(outputFile).size,
-      sha256: crypto.createHash("sha256").update(fs.readFileSync(outputFile)).digest("hex"),
-    };
+    // Streamed, so a multi-GB video is never held in memory.
+    const bytes = fs.statSync(outputFile).size;
+    job.artifact = { path: outputFile, bytes, sha256: await sha256File(outputFile) };
     job.status = "success";
   } catch (error) {
     job.status = "error";
     job.error = error.message;
   } finally {
     running.delete(job.id);
+    fs.rmSync(varsFile, { force: true }); // variables may hold caller data; keep them only while rendering
     job.finishedAt = new Date().toISOString();
     saveJob(job);
   }
@@ -200,6 +265,10 @@ app.post("/render", requireAuth, (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
+  if (request.idempotencyKey && byIdempotencyKey.has(request.idempotencyKey)) {
+    const existing = readJob(byIdempotencyKey.get(request.idempotencyKey));
+    if (existing) return res.status(200).json({ jobId: existing.id, status: existing.status, project: existing.projectDir, reused: true });
+  }
   if (running.size >= MAX_RUNNING) {
     return res.status(429).json({ error: "A render is already running. Retry when it finishes." });
   }
@@ -214,6 +283,7 @@ app.post("/render", requireAuth, (req, res) => {
     fps: request.fps,
     timeoutMinutes: request.timeoutMinutes,
     output: path.join("renders", `${id}.${request.format}`),
+    idempotencyKey: request.idempotencyKey || null,
     startedAt: new Date().toISOString(),
     finishedAt: null,
     artifact: null,
@@ -222,6 +292,7 @@ app.post("/render", requireAuth, (req, res) => {
     stderr: "",
   };
   saveJob(job);
+  if (job.idempotencyKey) byIdempotencyKey.set(job.idempotencyKey, id);
   running.set(id, { job, child: null });
   runJob(job, request);
   res.status(202).json({ jobId: id, status: job.status, project: request.projectDir });
@@ -238,7 +309,7 @@ app.post("/renders/:jobId/stop", requireAuth, (req, res) => {
   if (!entry) return res.status(404).json({ error: "Running render not found. It may already be finished." });
   entry.job.status = "stopped";
   saveJob(entry.job);
-  if (entry.child) entry.child.kill("SIGTERM");
+  terminate(entry.child);
   res.json({ ok: true, message: "Stop signal sent." });
 });
 
