@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -100,6 +101,11 @@ def _render_request(mission):
     if not isinstance(spec, dict) or not isinstance(spec.get("project"), str) or not spec["project"].strip():
         raise ValueError("video.render needs render.project (a HyperFrames project folder in the render workspace)")
     return {key: spec[key] for key in RENDER_FIELDS if key in spec}
+
+
+def _idempotency_key(mission):
+    key = re.sub(r"[^A-Za-z0-9._:-]", "-", str(mission["mission_id"]))[:120]
+    return f"tb:{key}"
 
 
 def _engineering_request(mission):
@@ -380,7 +386,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(exc)}, 400)
             return
         try:
-            started = _render_service("/render", "POST", request, timeout=30)
+            # The mission id makes a retried mission reuse its render instead of starting a second one.
+            started = _render_service("/render", "POST", {**request, "idempotencyKey": _idempotency_key(mission)}, timeout=30)
             job_id = str(started.get("jobId") or "")
             if not job_id:
                 raise RuntimeError(started.get("error") or "render service did not return a job id")
@@ -398,7 +405,8 @@ class Handler(BaseHTTPRequestHandler):
                            failures=[str(exc)[:500]], completed_at=now)
             return
         receipt = VID_PREFIX + job_id
-        self._envelope(mission, "working", f"BARS started render {job_id} for {request['project']}.", 202,
+        verb = "is already running" if started.get("reused") else "started"
+        self._envelope(mission, "working", f"BARS {verb} render {job_id} for {request['project']}.", 202,
                        evidence=[
                            {"type": "external_state", "ref": f"bars://video/{job_id}", "summary": "HyperFrames render receipt"},
                            {"type": "trace", "ref": f"trace://{mission['trace_id']}"},

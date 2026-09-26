@@ -106,9 +106,13 @@ s, b = invoke("operator", capability="video.render", render={"project": "launch"
 vid = (b.get("runtime") or {}).get("bars_mission_id", "")
 check("video.render dispatched to the render service", s == 202 and vid.startswith("vid-"), f"{s} {vid}")
 path_, auth, body = render_calls[-1]
-check("render service got its own bearer and only known fields",
-      path_ == "/render" and auth == f"Bearer {RENDER_TOKEN}" and body == {"project": "launch", "quality": "draft"}, str(render_calls[-1]))
+check("render service got its own bearer, only known fields, and the mission id as idempotency key",
+      path_ == "/render" and auth == f"Bearer {RENDER_TOKEN}"
+      and body == {"project": "launch", "quality": "draft", "idempotencyKey": "tb:a"}, str(render_calls[-1]))
 s, st = status(vid)
+path_, auth, body = render_calls[-1]
+check("render status polls /renders/{jobId} with the render bearer",
+      path_ == f"/renders/{vid[len('vid-'):]}" and auth == f"Bearer {RENDER_TOKEN}" and body is None, str(render_calls[-1]))
 check("render status done carries the artifact hash as evidence",
       s == 200 and st.get("status") == "done" and any("sha256 " + "d" * 64 in e.get("summary", "") for e in st.get("evidence", [])), f"{s} {st.get('status')}")
 s, _ = invoke("operator", capability="video.render"); check("video.render without a project refused", s == 400, f"{s}")
@@ -123,6 +127,14 @@ s, _ = invoke("operator"); check("operator route still accepted", s == 202, f"{s
 s, _ = invoke("personal"); check("personal route refused", s == 409, f"{s}")
 s, _ = invoke("engineering", token=None); check("missing token refused", s == 401, f"{s}")
 s, _ = invoke("engineering", token="x" * 400); check("wrong/oversized token refused", s == 401, f"{s}")
+
+# The public capability list must not call the video engine usable unless the render service is configured.
+import subprocess
+_caps_js = ("import('./lib/bars-capabilities.js').then(m => { const v = e => m.publicCapabilityStatus(e).find(c => c.id === 'hyperframes-video').status;"
+            " console.log(JSON.stringify([v({ HERMES_REMOTE_URL: 'h', HERMES_API_KEY: 'k' }), v({ HYPERFRAMES_RENDER_URL: 'http://127.0.0.1:8788', HYPERFRAMES_RENDER_TOKEN: 'x'.repeat(40) })])); })")
+_caps = subprocess.run(["node", "-e", _caps_js], cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), capture_output=True, text=True)
+check("hyperframes-video is 'declared' without the render service, 'configured' with it",
+      _caps.stdout.strip() == '["declared","configured"]', _caps.stdout + _caps.stderr)
 
 print(f"\n{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)
