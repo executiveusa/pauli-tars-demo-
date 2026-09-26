@@ -5,12 +5,14 @@ on:
       - "terabithia_adapter.py"
       - "tests/test_terabithia_adapter.py"
       - "Launch BARS.command"
+      - "engineering/pauli-control/**"
       - ".github/workflows/terabithia-adapter.yml"
 permissions:
   contents: read
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -19,3 +21,5 @@ jobs:
       - run: python -m py_compile terabithia_adapter.py server.py
       - run: python tests/test_terabithia_adapter.py
       - run: bash -n 'Launch BARS.command'
+      - run: npm ci --no-audit --no-fund && npm test
+        working-directory: engineering/pauli-control

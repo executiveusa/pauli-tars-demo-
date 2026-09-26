@@ -12,7 +12,7 @@ const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 const CONTROL_DIR = path.dirname(fileURLToPath(import.meta.url));
-const JOB_DIR = path.join(CONTROL_DIR, "jobs");
+const JOB_DIR = path.resolve(process.env.PAULI_CONTROL_JOB_DIR || path.join(CONTROL_DIR, "jobs"));
 
 const PORT = Number(process.env.PORT || 8787);
 const TOKEN = process.env.PAULI_CONTROL_TOKEN;
@@ -73,18 +73,24 @@ function safeRepoPath(repoInput = ".") {
 
   const resolved = path.resolve(WORKSPACE_ROOT, repo);
 
-  if (resolved !== WORKSPACE_ROOT && !resolved.startsWith(WORKSPACE_ROOT + path.sep)) {
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Repo path does not exist: ${repo}`);
+  }
+
+  // Compare real paths so a symlink inside the workspace cannot point a job at /etc or $HOME.
+  const root = fs.realpathSync(WORKSPACE_ROOT);
+  const real = fs.realpathSync(resolved);
+  if (real !== root && !real.startsWith(root + path.sep)) {
     throw new Error("Repo path blocked. It must stay inside PAULI_WORKSPACE_ROOT.");
   }
 
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`Repo path does not exist: ${resolved}`);
-  }
-
-  return resolved;
+  return real;
 }
 
+const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function jobPath(id) {
+  if (!JOB_ID.test(String(id))) throw new Error("Invalid job id.");
   return path.join(JOB_DIR, `${id}.json`);
 }
 
@@ -93,6 +99,7 @@ function saveJob(job) {
 }
 
 function readJob(id) {
+  if (!JOB_ID.test(String(id))) return null;
   const file = jobPath(id);
   if (!fs.existsSync(file)) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -160,6 +167,8 @@ function toolsForMode(mode) {
   throw new Error("Invalid mode. Use plan, read, write, or ship.");
 }
 
+const SAFE_FLAG_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,127}$/;
+
 function piCommandArgs(args) {
   if (PI_BIN === "npx") {
     return {
@@ -174,16 +183,9 @@ function piCommandArgs(args) {
   };
 }
 
+// Liveness only; paths and mode flags are for authenticated callers (/agents).
 app.get("/health", (_req, res) => {
-  res.json({
-    ok: true,
-    service: "pauli-control-bridge",
-    workspaceRoot: WORKSPACE_ROOT,
-    pauliRepoRoot: PAULI_REPO_ROOT,
-    piBin: PI_BIN,
-    allowWrite: ALLOW_WRITE,
-    allowShip: ALLOW_SHIP
-  });
+  res.json({ ok: true, service: "pauli-control-bridge" });
 });
 
 app.get("/agents", requireAuth, (_req, res) => {
@@ -196,7 +198,9 @@ app.get("/agents", requireAuth, (_req, res) => {
         defaultMode: "plan",
         defaultRepo: "pauli-pi-agent"
       }
-    ]
+    ],
+    allowWrite: ALLOW_WRITE,
+    allowShip: ALLOW_SHIP
   });
 });
 
@@ -209,10 +213,19 @@ app.post("/run", requireAuth, (req, res) => {
     const model = body.model ? String(body.model) : "";
     const provider = body.provider ? String(body.provider) : "";
     const thinking = body.thinking ? String(body.thinking) : DEFAULT_THINKING;
-    const timeoutMinutes = Math.min(Number(body.timeoutMinutes || 30), 120);
+    const timeoutMinutes = Number(body.timeoutMinutes ?? 30);
 
     if (!task) {
       return res.status(400).json({ error: "Missing task." });
+    }
+    if (!Number.isFinite(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 120) {
+      return res.status(400).json({ error: "timeoutMinutes must be a number from 1 to 120." });
+    }
+    // These become CLI flag values; a leading "-" would be read as another flag.
+    for (const [name, value] of [["model", model], ["provider", provider], ["thinking", thinking]]) {
+      if (value && !SAFE_FLAG_VALUE.test(value)) {
+        return res.status(400).json({ error: `Invalid ${name}.` });
+      }
     }
 
     const repoPath = safeRepoPath(repo);
@@ -255,9 +268,10 @@ app.post("/run", requireAuth, (req, res) => {
 
     saveJob(job);
 
+    // No shell: task text and flags reach the agent as literal argv, never as shell syntax.
     const child = spawn(command, args, {
       cwd: repoPath,
-      shell: true,
+      shell: false,
       env: jobEnv()
     });
 
@@ -278,6 +292,15 @@ app.post("/run", requireAuth, (req, res) => {
 
     child.stderr.on("data", (chunk) => {
       job.stderr = clip(job.stderr + chunk.toString());
+      saveJob(job);
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(killTimer);
+      running.delete(id);
+      job.status = "error";
+      job.stderr = clip(`${job.stderr}\nCould not start ${command}: ${err.message}`);
+      job.finishedAt = new Date().toISOString();
       saveJob(job);
     });
 
