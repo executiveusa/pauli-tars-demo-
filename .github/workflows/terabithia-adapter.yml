@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "terabithia_adapter.py"
+      - "tests/test_terabithia_adapter.py"
       - "Launch BARS.command"
       - ".github/workflows/terabithia-adapter.yml"
 permissions:
@@ -16,4 +17,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m py_compile terabithia_adapter.py server.py
+      - run: python tests/test_terabithia_adapter.py
       - run: bash -n 'Launch BARS.command'
