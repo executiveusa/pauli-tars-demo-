@@ -70,11 +70,24 @@ npx hyperframes doctor            # checks Chrome / FFmpeg / FFprobe
 
 On the BARS adapter, set `HYPERFRAMES_RENDER_URL=http://127.0.0.1:8788` and the same `HYPERFRAMES_RENDER_TOKEN`.
 
-So that agents can write projects, install the HyperFrames skills for the agent runtime user:
+## Agent skills and workspace
+
+Run this once as the agent runtime user, and again whenever you want to update:
 
 ```bash
-npx hyperframes skills update
+media/hyperframes/install-skills.sh /srv/video
 ```
+
+It sets up two things:
+1. **The official HyperFrames core skills** (`npx hyperframes skills update`). These are the `/hyperframes` router plus the core, animation, keyframes, creative, audio, CLI, registry, studio and media-use skills. They are linked into every compatible agent for that user (`~/.claude/skills`, `~/.agents/skills`, and so on).
+2. **[Nate Herk's HyperFrames student kit](https://github.com/nateherkai/hyperframes-student-kit)**, installed as the agents' video workspace in `/srv/video/kit`. It is pinned to a reviewed commit and verified. It adds 15 skills (`/edit-video`, `/short-form-edit`, `/cut-silences`, `/cut-mistakes`, `/video-storytelling`, `/motion-showreel`, `/style-library`, `/make-a-video` and others), 406 motion cards, and editing tools.
+   - The kit's skills call its own scripts and style library, so the whole kit is installed, not loose skill files.
+   - **Not installed:** the AI Automation Society brand assets and AIS projects (the kit's notice says they are not licensed for reuse), the showcase videos, and the 287 MB of sample projects.
+   - The script runs the kit's own test suite after installing.
+
+After that, agents open `/srv/video/kit` in Claude Code or Codex and create projects under `video-projects/` (for example with `npm run new-video <name>`). Set `HYPERFRAMES_WORKSPACE_ROOT=/srv/video/kit/video-projects` so the render service renders them.
+
+The kit pins `hyperframes` 0.7.109 for its own lint and preview. The render service renders with 0.8.78.
 
 ## Tests
 
