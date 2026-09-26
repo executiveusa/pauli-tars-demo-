@@ -346,5 +346,5 @@ app.post("/runs/:jobId/stop", requireAuth, (req, res) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`Pauli Control Bridge listening on http://0.0.0.0:${PORT}`);
+  console.log(`Pauli Control Bridge listening on http://${HOST}:${PORT}`);
 });
