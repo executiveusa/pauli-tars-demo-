@@ -48,12 +48,15 @@ function requireAuth(req, res, next) {
 // Jobs get an explicit environment, never this bridge's whole process.env. System basics and model
 // provider keys (*_API_KEY) pass; the bridge token and any other *_TOKEN / *SECRET* stay behind.
 // JOB_ENV_ALLOW="NAME1,NAME2" adds specific names when a job truly needs them.
+// Personal-lane credentials (Pi: health, life, finances) never reach an engineering job, even if
+// someone lists them in JOB_ENV_ALLOW; the personal lane is sealed from BARS.
+const PERSONAL_LANE_ENV = /^(PAULI_PI_|PI_)|PERSONAL/;
 const JOB_ENV_BASE = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "NODE_OPTIONS", "NODE_ENV"];
 function jobEnv() {
   const extra = String(process.env.JOB_ENV_ALLOW || "").split(",").map((v) => v.trim()).filter(Boolean);
   const env = { PI_TELEMETRY: "0" };
   for (const [name, value] of Object.entries(process.env)) {
-    if (value === undefined) continue;
+    if (value === undefined || PERSONAL_LANE_ENV.test(name)) continue;
     const provider = /_API_KEY$/.test(name) && !/(TOKEN|SECRET)/.test(name);
     if (JOB_ENV_BASE.includes(name) || provider || extra.includes(name)) env[name] = value;
   }

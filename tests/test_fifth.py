@@ -86,7 +86,9 @@ except RuntimeError as e:
     check("adv-v4-5d fallback raises instead of leaking",
           "fallback refused" in str(e) and "key-host binding" in str(e), str(e)[:110])
 check("adv-v4-5e NO request ever constructed to openrouter",
-      len(calls) == 1 and "ai-gateway.vercel.sh" in calls[0]
+      # primary + free-tier fallback retries (owner directive 2026-09-21) may all hit the
+      # gateway; the invariant is that none of them carries the key to openrouter.
+      len(calls) >= 1 and all("ai-gateway.vercel.sh" in u for u in calls)
       and not any("openrouter" in u for u in calls), str(calls))
 
 # adv-v4-6: XFF trusted only from loopback proxy
