@@ -346,5 +346,6 @@ app.post("/runs/:jobId/stop", requireAuth, (req, res) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`Pauli Control Bridge listening on http://0.0.0.0:${PORT}`);
+  const shownHost = HOST.includes(":") ? `[${HOST}]` : HOST; // IPv6 literals need brackets in a URL
+  console.log(`Pauli Control Bridge listening on http://${shownHost}:${PORT}`);
 });
