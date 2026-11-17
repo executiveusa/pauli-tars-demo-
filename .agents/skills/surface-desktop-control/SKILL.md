@@ -14,7 +14,7 @@ BARS is the **engineering/operator worker** routed by the existing Terabithia fl
 
 ### Provider order
 
-1. Inspect connected tools and existing session first. In this ChatGPT environment, **Remote Desktop Commander** is verified online for this device and provides terminal and file tools. Those tools do **not** by themselves certify screenshot, mouse, or keyboard access. Reuse it for inventory/command work without installing a competing service.
+1. Inspect connected tools and existing session first. When available in the current authorized session, **Remote Desktop Commander** provides terminal and file tools; verify connection and the actual target device at runtime. Those tools do **not** by themselves certify screenshot, mouse, or keyboard access. Reuse it for inventory/command work without installing a competing service.
 2. If actual screen, pointer, or keyboard control is required and an approved tool exists, discover and use its documented screenshot/input operations. If none exists, configure [bscott/rdc](https://github.com/bscott/rdc) **only on explicit owner approval** for this device. It runs as the signed-in, non-elevated Windows user; remote clients use `rdc mcp --target surface` over the existing private Tailscale tailnet.
 3. For ChatGPT's supported local Windows desktop sessions, native Computer Use may substitute for RDC; it is not automatically available to browser-only conversations.
 
