@@ -19,7 +19,7 @@
     "three_d": ["threejs"],
     "voice": ["speech"],
     "agency": ["client-presence-audit","landing-copy","pitch-deck","lead-scouting","support-replies"],
-    "ops": ["commitment-tracking","inbox-triage","digest-composer","feed-watch","relationship-log","work-splitting","web-research","opportunity-scan","icm-pricing"]
+    "ops": ["commitment-tracking","inbox-triage","digest-composer","feed-watch","relationship-log","work-splitting","web-research","opportunity-scan","icm-pricing","surface-desktop-control"]
   },
   "skills": {
     "make-a-plan": {"lane":"factory_judge","reach_for":"Start any build task by writing the approach before code.","body_status":"manifest-contract"},
@@ -63,7 +63,8 @@
     "work-splitting": {"lane":"ops","reach_for":"Split large jobs into bounded parallel agent pieces.","body_status":"manifest-contract"},
     "web-research": {"lane":"ops","reach_for":"Produce cross-checked cited research briefs.","body_status":"manifest-contract"},
     "opportunity-scan": {"lane":"ops","reach_for":"Find monetizable openings matched to the owner's capabilities.","body_status":"manifest-contract"},
-    "icm-pricing": {"lane":"ops","reach_for":"Require an evidence bar before pricing or selling an offer.","body_status":"manifest-contract"}
+    "icm-pricing": {"lane":"ops","reach_for":"Require an evidence bar before pricing or selling an offer.","body_status":"manifest-contract"},
+    "surface-desktop-control": {"lane":"ops","reach_for":"Use approved real Surface mouse/keyboard/screenshot tools only when API and browser automation are insufficient.","body_status":"repo-local","body_path":".agents/skills/surface-desktop-control/SKILL.md"}
   },
   "pare_spine": {
     "atomic": true,
